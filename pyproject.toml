@@ -1,6 +1,6 @@
 [project]
 name = "win_service"
-version = "1.0.1"
+version = "1.0.2"
 description = "Windows service for RocketMan Proxy Bridge"
 authors = [ { name = "XanderWP" } ]
 readme = "README.md"
