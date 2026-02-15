@@ -1,0 +1,166 @@
+name: Build and Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-macos:
+    name: Build macOS
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+      
+      - name: Get version
+        id: version
+        run: |
+          if [[ $GITHUB_REF == refs/tags/* ]]; then
+            echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          else
+            echo "version=dev-$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Build universal binary
+        run: |
+          GOOS=darwin GOARCH=amd64 go build -o macos-amd64 -ldflags "-s -w" src/macos/main.go
+          GOOS=darwin GOARCH=arm64 go build -o macos-arm64 -ldflags "-s -w" src/macos/main.go
+          lipo -create -output rocketman-tunnel-service macos-amd64 macos-arm64
+          chmod +x rocketman-tunnel-service
+          lipo -info rocketman-tunnel-service
+      
+      - name: Create archive
+        run: |
+          mkdir -p release
+          cp rocketman-tunnel-service release/
+          cp src/macos/install.sh release/
+          cp src/macos/uninstall.sh release/
+          chmod +x release/*.sh
+          cd release && tar -czf ../rocketman-service-macos.tar.gz * && cd ..
+          shasum -a 256 rocketman-service-macos.tar.gz > checksums-macos.txt
+      
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-artifacts
+          path: |
+            rocketman-tunnel-service
+            rocketman-service-macos.tar.gz
+            src/macos/install.sh
+            src/macos/uninstall.sh
+            checksums-macos.txt
+
+  build-windows:
+    name: Build Windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      
+      - name: Read version
+        id: version
+        shell: pwsh
+        run: |
+          $content = Get-Content -Raw pyproject.toml
+          $m = [regex]::Match($content,'version\s*=\s*"(.*?)"')
+          if (-not $m.Success) { exit 1 }
+          echo "version=$($m.Groups[1].Value)" >> $env:GITHUB_OUTPUT
+      
+      - name: Install and build
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          .\setup_venv.bat
+          .\build_win.bat
+      
+      - name: Find EXE
+        id: exe
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem -Path .\dist -Filter *.exe -Recurse | Select-Object -First 1
+          if (-not $exe) { exit 1 }
+          echo "path=$($exe.FullName)" >> $env:GITHUB_OUTPUT
+      
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-artifacts
+          path: ${{ steps.exe.outputs.path }}
+
+  release:
+    name: Create Release
+    needs: [build-macos, build-windows]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Read version
+        id: version
+        run: |
+          version=$(grep -oP 'version\s*=\s*"\K[^"]+' pyproject.toml)
+          echo "version=$version" >> $GITHUB_OUTPUT
+          echo "tag=v$version" >> $GITHUB_OUTPUT
+      
+      - name: Check if release exists
+        id: check
+        run: |
+          if gh release view ${{ steps.version.outputs.tag }} &>/dev/null; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+      
+      - uses: actions/download-artifact@v4
+        if: steps.check.outputs.exists == 'false'
+        with:
+          name: macos-artifacts
+          path: artifacts/macos
+      
+      - uses: actions/download-artifact@v4
+        if: steps.check.outputs.exists == 'false'
+        with:
+          name: windows-artifacts
+          path: artifacts/windows
+      
+      - name: Create Release
+        if: steps.check.outputs.exists == 'false'
+        run: |
+          gh release create ${{ steps.version.outputs.tag }} \
+            --title "Release ${{ steps.version.outputs.tag }}" \
+            --notes "## RocketMan Tunnel Service
+
+          ### Installation
+
+          **macOS:**
+          \`\`\`bash
+          curl -fsSL https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.tag }}/install.sh | sudo bash
+          \`\`\`
+
+          **Windows:**
+          Download \`win_service.exe\` and install as a service.
+
+          ### Files
+
+          - \`rocketman-tunnel-service\` - macOS universal binary (Intel + Apple Silicon)
+          - \`rocketman-service-macos.tar.gz\` - macOS complete package
+          - \`install.sh\` / \`uninstall.sh\` - macOS installation scripts
+          - \`win_service.exe\` - Windows service executable" \
+            artifacts/macos/rocketman-tunnel-service \
+            artifacts/macos/rocketman-service-macos.tar.gz \
+            artifacts/macos/src/macos/install.sh \
+            artifacts/macos/src/macos/uninstall.sh \
+            artifacts/macos/checksums-macos.txt \
+            artifacts/windows/*.exe
+        env:
+          GH_TOKEN: ${{ github.token }}

@@ -1,0 +1,7 @@
+/.venv
+/build
+/dist
+/*.spec
+__pycache__
+version.txt
+.DS_Store
