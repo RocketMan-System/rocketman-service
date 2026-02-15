@@ -22,6 +22,11 @@ const (
 	HTTP_PORT          = 5020
 	APP_PING_URL       = "http://localhost:8081/ping"
 	APP_CHECK_INTERVAL = 2 * time.Second
+	
+	// Quarantine removal settings
+	APP_PATH                    = "/Applications/RocketMan Proxy Bridge.app"
+	QUARANTINE_CHECK_INTERVAL   = 5 * time.Second
+	QUARANTINE_REMOVAL_ENABLED  = true
 )
 
 // TunnelManager manages the sing-box process
@@ -297,6 +302,108 @@ func (am *AppMonitor) monitorLoop() {
 	}
 }
 
+// QuarantineMonitor automatically checks and removes quarantine from app
+type QuarantineMonitor struct {
+	appPath       string
+	checkInterval time.Duration
+	enabled       bool
+	stopChan      chan struct{}
+	wg            sync.WaitGroup
+}
+
+// NewQuarantineMonitor creates a new quarantine monitor
+func NewQuarantineMonitor(appPath string, checkInterval time.Duration, enabled bool) *QuarantineMonitor {
+	return &QuarantineMonitor{
+		appPath:       appPath,
+		checkInterval: checkInterval,
+		enabled:       enabled,
+		stopChan:      make(chan struct{}),
+	}
+}
+
+// Start starts quarantine monitoring
+func (qm *QuarantineMonitor) Start() {
+	if !qm.enabled {
+		log.Println("Quarantine removal is disabled")
+		return
+	}
+
+	// Check if app path exists
+	if _, err := os.Stat(qm.appPath); os.IsNotExist(err) {
+		log.Printf("App path does not exist, quarantine monitor disabled: %s", qm.appPath)
+		return
+	}
+
+	qm.wg.Add(1)
+	go qm.monitorLoop()
+	log.Printf("Quarantine monitor started for: %s (check interval: %v)", qm.appPath, qm.checkInterval)
+}
+
+// Stop stops quarantine monitoring
+func (qm *QuarantineMonitor) Stop() {
+	if !qm.enabled {
+		return
+	}
+	close(qm.stopChan)
+	qm.wg.Wait()
+	log.Println("Quarantine monitor stopped")
+}
+
+// hasQuarantine checks if app has quarantine attribute
+func (qm *QuarantineMonitor) hasQuarantine() bool {
+	cmd := exec.Command("xattr", "-p", "com.apple.quarantine", qm.appPath)
+	err := cmd.Run()
+	// If command succeeds (exit code 0), attribute exists
+	return err == nil
+}
+
+// removeQuarantine removes quarantine attribute from app
+func (qm *QuarantineMonitor) removeQuarantine() error {
+	log.Printf("Removing quarantine from: %s", qm.appPath)
+	
+	cmd := exec.Command("xattr", "-rd", "com.apple.quarantine", qm.appPath)
+	output, err := cmd.CombinedOutput()
+	
+	if err != nil {
+		return fmt.Errorf("failed to remove quarantine: %v, output: %s", err, string(output))
+	}
+	
+	log.Printf("✓ Quarantine removed successfully from: %s", qm.appPath)
+	return nil
+}
+
+// monitorLoop is the main monitoring loop
+func (qm *QuarantineMonitor) monitorLoop() {
+	defer qm.wg.Done()
+
+	// Check immediately on start
+	if qm.hasQuarantine() {
+		log.Printf("⚠ Quarantine detected on startup: %s", qm.appPath)
+		if err := qm.removeQuarantine(); err != nil {
+			log.Printf("Error removing quarantine: %v", err)
+		}
+	} else {
+		log.Printf("✓ No quarantine detected: %s", qm.appPath)
+	}
+
+	ticker := time.NewTicker(qm.checkInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-qm.stopChan:
+			return
+		case <-ticker.C:
+			if qm.hasQuarantine() {
+				log.Printf("⚠ Quarantine detected: %s", qm.appPath)
+				if err := qm.removeQuarantine(); err != nil {
+					log.Printf("Error removing quarantine: %v", err)
+				}
+			}
+		}
+	}
+}
+
 // HTTPHandler handles HTTP control requests
 type HTTPHandler struct {
 	tunnelManager *TunnelManager
@@ -375,6 +482,10 @@ func main() {
 	appMonitor := NewAppMonitor(tunnelManager, APP_PING_URL, APP_CHECK_INTERVAL)
 	appMonitor.Start()
 
+	// Create quarantine monitor
+	quarantineMonitor := NewQuarantineMonitor(APP_PATH, QUARANTINE_CHECK_INTERVAL, QUARANTINE_REMOVAL_ENABLED)
+	quarantineMonitor.Start()
+
 	// Create HTTP server
 	handler := &HTTPHandler{tunnelManager: tunnelManager}
 	server := &http.Server{
@@ -398,6 +509,7 @@ func main() {
 	log.Println("Shutdown signal received, stopping service...")
 
 	// Graceful shutdown
+	quarantineMonitor.Stop()
 	appMonitor.Stop()
 	tunnelManager.Stop()
 
