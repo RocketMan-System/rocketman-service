@@ -22,7 +22,6 @@ const (
 	HTTP_PORT          = 5020
 	APP_PING_URL       = "http://localhost:8081/ping"
 	APP_CHECK_INTERVAL = 2 * time.Second
-	APP_BASE_PATH      = "test" // Измени на нужное имя приложения
 )
 
 // TunnelManager manages the sing-box process
