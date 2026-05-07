@@ -75,15 +75,28 @@ download_binary() {
     fi
 
     log_info "Downloading from: $DOWNLOAD_URL"
-    TMP_FILE="/tmp/${BINARY_NAME}"
+    TMP_FILE="/tmp/${BINARY_NAME}.tar.gz"
+    TMP_DIR="/tmp/${BINARY_NAME}-extract"
 
     if ! curl -L -o "$TMP_FILE" "$DOWNLOAD_URL"; then
         log_error "Failed to download binary"
         exit 1
     fi
 
-    chmod +x "$TMP_FILE"
-    mv "$TMP_FILE" "${INSTALL_DIR}/${BINARY_NAME}"
+    rm -rf "$TMP_DIR"
+    mkdir -p "$TMP_DIR"
+    tar -xzf "$TMP_FILE" -C "$TMP_DIR"
+    rm -f "$TMP_FILE"
+
+    EXTRACTED_BIN=$(find "$TMP_DIR" -type f -name "$BINARY_NAME" | head -n 1)
+    if [ -z "$EXTRACTED_BIN" ]; then
+        log_error "Binary '${BINARY_NAME}' not found inside archive"
+        exit 1
+    fi
+
+    chmod +x "$EXTRACTED_BIN"
+    mv "$EXTRACTED_BIN" "${INSTALL_DIR}/${BINARY_NAME}"
+    rm -rf "$TMP_DIR"
     log_info "Binary installed to ${INSTALL_DIR}/${BINARY_NAME}"
 }
 
@@ -100,6 +113,8 @@ StartLimitBurst=5
 
 [Service]
 Type=simple
+User=root
+Group=root
 ExecStart=${INSTALL_DIR}/${BINARY_NAME}
 Restart=always
 RestartSec=3
