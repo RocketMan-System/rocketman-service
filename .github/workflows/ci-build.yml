@@ -110,39 +110,23 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      
-      - uses: actions/setup-python@v4
+
+      - uses: actions/setup-go@v5
         with:
-          python-version: '3.11'
-      
-      - name: Read version
-        id: version
+          go-version: '1.21'
+
+      - name: Build Windows executable
         shell: pwsh
         run: |
-          $content = Get-Content -Raw pyproject.toml
-          $m = [regex]::Match($content,'version\s*=\s*"(.*?)"')
-          if (-not $m.Success) { exit 1 }
-          echo "version=$($m.Groups[1].Value)" >> $env:GITHUB_OUTPUT
-      
-      - name: Install and build
-        shell: pwsh
-        run: |
-          python -m pip install --upgrade pip
-          .\setup_venv.bat
-          .\build_win.bat
-      
-      - name: Find EXE
-        id: exe
-        shell: pwsh
-        run: |
-          $exe = Get-ChildItem -Path .\dist -Filter *.exe -Recurse | Select-Object -First 1
-          if (-not $exe) { exit 1 }
-          echo "path=$($exe.FullName)" >> $env:GITHUB_OUTPUT
-      
+          go mod download
+          $env:GOOS = 'windows'
+          $env:GOARCH = 'amd64'
+          go build -o rocketman-tunnel-service.exe -ldflags "-s -w" src/windows/main.go
+
       - uses: actions/upload-artifact@v4
         with:
           name: windows-artifacts
-          path: ${{ steps.exe.outputs.path }}
+          path: rocketman-tunnel-service.exe
 
   release:
     name: Create Release
@@ -155,7 +139,7 @@ jobs:
       - name: Read version
         id: version
         run: |
-          version=$(grep -oP 'version\s*=\s*"\K[^"]+' pyproject.toml)
+          version=$(cat VERSION | tr -d '[:space:]')
           echo "version=$version" >> $GITHUB_OUTPUT
           echo "tag=v$version" >> $GITHUB_OUTPUT
       
@@ -228,6 +212,6 @@ jobs:
             artifacts/linux/install-linux.sh \
             artifacts/linux/uninstall-linux.sh \
             artifacts/linux/checksums-linux.txt \
-            artifacts/windows/*.exe
+            artifacts/windows/rocketman-tunnel-service.exe
         env:
           GH_TOKEN: ${{ github.token }}
