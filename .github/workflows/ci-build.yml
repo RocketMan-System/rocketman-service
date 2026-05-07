@@ -56,6 +56,55 @@ jobs:
             src/macos/uninstall.sh
             checksums-macos.txt
 
+  build-linux:
+    name: Build Linux
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - name: Build amd64 and arm64 binaries
+        run: |
+          GOOS=linux GOARCH=amd64 go build -o linux-amd64 -ldflags "-s -w" src/linux/main.go
+          GOOS=linux GOARCH=arm64 go build -o linux-arm64 -ldflags "-s -w" src/linux/main.go
+
+      - name: Create archives
+        run: |
+          mkdir -p release-linux-amd64 release-linux-arm64
+
+          cp linux-amd64 release-linux-amd64/rocketman-tunnel-service
+          cp src/linux/install.sh release-linux-amd64/
+          cp src/linux/uninstall.sh release-linux-amd64/
+          chmod +x release-linux-amd64/rocketman-tunnel-service release-linux-amd64/*.sh
+          tar -czf rocketman-service-linux-amd64.tar.gz -C release-linux-amd64 .
+
+          cp linux-arm64 release-linux-arm64/rocketman-tunnel-service
+          cp src/linux/install.sh release-linux-arm64/
+          cp src/linux/uninstall.sh release-linux-arm64/
+          chmod +x release-linux-arm64/rocketman-tunnel-service release-linux-arm64/*.sh
+          tar -czf rocketman-service-linux-arm64.tar.gz -C release-linux-arm64 .
+
+          sha256sum rocketman-service-linux-amd64.tar.gz rocketman-service-linux-arm64.tar.gz > checksums-linux.txt
+
+          cp src/linux/install.sh install-linux.sh
+          cp src/linux/uninstall.sh uninstall-linux.sh
+          chmod +x install-linux.sh uninstall-linux.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-artifacts
+          path: |
+            linux-amd64
+            linux-arm64
+            rocketman-service-linux-amd64.tar.gz
+            rocketman-service-linux-arm64.tar.gz
+            install-linux.sh
+            uninstall-linux.sh
+            checksums-linux.txt
+
   build-windows:
     name: Build Windows
     runs-on: windows-latest
@@ -97,7 +146,7 @@ jobs:
 
   release:
     name: Create Release
-    needs: [build-macos, build-windows]
+    needs: [build-macos, build-linux, build-windows]
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main'
     steps:
@@ -130,6 +179,12 @@ jobs:
       - uses: actions/download-artifact@v4
         if: steps.check.outputs.exists == 'false'
         with:
+          name: linux-artifacts
+          path: artifacts/linux
+
+      - uses: actions/download-artifact@v4
+        if: steps.check.outputs.exists == 'false'
+        with:
           name: windows-artifacts
           path: artifacts/windows
       
@@ -147,6 +202,11 @@ jobs:
           curl -fsSL https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.tag }}/install.sh | sudo bash
           \`\`\`
 
+          **Linux (amd64/arm64):**
+          \`\`\`bash
+          curl -fsSL https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.tag }}/install.sh | sudo bash
+          \`\`\`
+
           **Windows:**
           Download \`win_service.exe\` and install as a service.
 
@@ -154,13 +214,20 @@ jobs:
 
           - \`rocketman-tunnel-service\` - macOS universal binary (Intel + Apple Silicon)
           - \`rocketman-service-macos.tar.gz\` - macOS complete package
-          - \`install.sh\` / \`uninstall.sh\` - macOS installation scripts
+          - \`rocketman-service-linux-amd64.tar.gz\` - Linux amd64 package
+          - \`rocketman-service-linux-arm64.tar.gz\` - Linux arm64 package
+          - \`install.sh\` / \`uninstall.sh\` - macOS/Linux installation scripts
           - \`win_service.exe\` - Windows service executable" \
             artifacts/macos/rocketman-tunnel-service \
             artifacts/macos/rocketman-service-macos.tar.gz \
             artifacts/macos/src/macos/install.sh \
             artifacts/macos/src/macos/uninstall.sh \
             artifacts/macos/checksums-macos.txt \
+            artifacts/linux/rocketman-service-linux-amd64.tar.gz \
+            artifacts/linux/rocketman-service-linux-arm64.tar.gz \
+            artifacts/linux/install-linux.sh \
+            artifacts/linux/uninstall-linux.sh \
+            artifacts/linux/checksums-linux.txt \
             artifacts/windows/*.exe
         env:
           GH_TOKEN: ${{ github.token }}
