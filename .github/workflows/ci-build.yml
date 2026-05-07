@@ -200,8 +200,8 @@ jobs:
           - \`rocketman-service-macos.tar.gz\` - macOS complete package
           - \`rocketman-service-linux-amd64.tar.gz\` - Linux amd64 package
           - \`rocketman-service-linux-arm64.tar.gz\` - Linux arm64 package
-          - `install.sh` / `uninstall.sh` - macOS installation scripts
-          - `install-linux.sh` / `uninstall-linux.sh` - Linux installation scripts
+          - \`install.sh\` / \`uninstall.sh\` - macOS installation scripts
+          - \`install-linux.sh\` / \`uninstall-linux.sh\` - Linux installation scripts
           - \`win_service.exe\` - Windows service executable" \
             artifacts/macos/rocketman-tunnel-service \
             artifacts/macos/rocketman-service-macos.tar.gz \
