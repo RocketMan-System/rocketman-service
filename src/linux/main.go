@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"os/user"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -53,10 +54,21 @@ func (tm *TunnelManager) Start(username, appname string) map[string]interface{} 
 		}
 	}
 
-	// Resolve home directory
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		homeDir = filepath.Join("/home", username)
+	// Resolve home directory by requested username to avoid using service user (root)
+	homeDir := ""
+	if username != "" {
+		u, err := user.Lookup(username)
+		if err == nil && u.HomeDir != "" {
+			homeDir = u.HomeDir
+		} else {
+			homeDir = filepath.Join("/home", username)
+		}
+	} else {
+		var err error
+		homeDir, err = os.UserHomeDir()
+		if err != nil {
+			homeDir = "/root"
+		}
 	}
 
 	// XDG_CONFIG_HOME or default ~/.config
