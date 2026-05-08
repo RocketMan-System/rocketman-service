@@ -1,0 +1,1 @@
+go build -o ./build/linux/rocketman-tunnel ./src/linux

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -137,13 +138,17 @@ func (tm *TunnelManager) Start(username, appname string) map[string]interface{} 
 		tm.process.Pid, tm.singboxPath, tm.configPath)
 
 	if tm.tunIfName != "" {
-		if err := waitForInterface(tm.tunIfName, 5*time.Second); err != nil {
-			log.Printf("Warning: tun interface %s not found after start: %v", tm.tunIfName, err)
-		} else if err := addInterfaceToTrustedZone(tm.tunIfName); err != nil {
-			log.Printf("Warning: failed to add interface %s to trusted zone: %v", tm.tunIfName, err)
-		} else {
-			log.Printf("Added interface %s to firewalld trusted zone", tm.tunIfName)
-		}
+		ifName := tm.tunIfName
+		go func() {
+			added, err := ensureInterfaceInTrustedZone(ifName, 30*time.Second)
+			if err != nil {
+				log.Printf("Warning: failed to add interface %s to trusted zone: %v", ifName, err)
+			} else if added {
+				log.Printf("Added interface %s to firewalld trusted zone", ifName)
+			} else {
+				log.Printf("Skipped firewalld trusted-zone binding for interface %s", ifName)
+			}
+		}()
 	}
 
 	return map[string]interface{}{
@@ -452,18 +457,56 @@ func addInterfaceToTrustedZone(iface string) error {
 }
 
 func removeInterfaceFromTrustedZone(iface string) error {
-	return runFirewallCmd("--zone=trusted", "--remove-interface="+iface)
+	err := runFirewallCmd("--zone=trusted", "--remove-interface="+iface)
+	if err == nil || errors.Is(err, errFirewallNotRunning) || errors.Is(err, errUnknownInterface) {
+		return nil
+	}
+	return err
 }
+
+func ensureInterfaceInTrustedZone(iface string, timeout time.Duration) (bool, error) {
+	deadline := time.Now().Add(timeout)
+	for {
+		err := addInterfaceToTrustedZone(iface)
+		if err == nil {
+			return true, nil
+		}
+		if errors.Is(err, errFirewallNotRunning) {
+			return false, nil
+		}
+		if errors.Is(err, errUnknownInterface) {
+			if time.Now().After(deadline) {
+				return false, nil
+			}
+			time.Sleep(1 * time.Second)
+			continue
+		}
+		return false, err
+	}
+}
+
+var (
+	errFirewallNotRunning = errors.New("firewalld not running")
+	errUnknownInterface   = errors.New("unknown interface")
+)
 
 func runFirewallCmd(args ...string) error {
 	if _, err := exec.LookPath("firewall-cmd"); err != nil {
-		return fmt.Errorf("firewall-cmd not found")
+		return errFirewallNotRunning
 	}
 
 	cmd := exec.Command("firewall-cmd", args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		trimmed := strings.TrimSpace(string(out))
+		// exit 252: FirewallD is not running
+		if strings.Contains(trimmed, "FirewallD is not running") {
+			return errFirewallNotRunning
+		}
+		// exit 17: UNKNOWN_INTERFACE
+		if strings.Contains(trimmed, "UNKNOWN_INTERFACE") {
+			return fmt.Errorf("%w: %s", errUnknownInterface, trimmed)
+		}
 		if trimmed == "" {
 			return err
 		}
