@@ -32,6 +32,7 @@ type TunnelManager struct {
 	mu          sync.Mutex
 	singboxPath string
 	configPath  string
+	tunIfName   string
 	isRunning   bool
 }
 
@@ -49,8 +50,9 @@ func (tm *TunnelManager) Start(username, appname string) map[string]interface{} 
 
 	if tm.isRunning {
 		return map[string]interface{}{
-			"status": "already_running",
-			"pid":    tm.process.Pid,
+			"status":        "already_running",
+			"pid":           tm.process.Pid,
+			"tun_interface": tm.tunIfName,
 		}
 	}
 
@@ -96,6 +98,13 @@ func (tm *TunnelManager) Start(username, appname string) map[string]interface{} 
 		}
 	}
 
+	tunIfName, err := getTunInterfaceNameFromConfig(tm.configPath)
+	if err != nil {
+		log.Printf("Warning: failed to detect tun interface from config: %v", err)
+		tunIfName = ""
+	}
+	tm.tunIfName = tunIfName
+
 	// Start sing-box process
 	cmd := exec.Command(tm.singboxPath, "run", "-c", tm.configPath)
 	cmd.SysProcAttr = &syscall.SysProcAttr{
@@ -127,11 +136,22 @@ func (tm *TunnelManager) Start(username, appname string) map[string]interface{} 
 	log.Printf("Tunnel started: PID=%d, singbox=%s, config=%s",
 		tm.process.Pid, tm.singboxPath, tm.configPath)
 
+	if tm.tunIfName != "" {
+		if err := waitForInterface(tm.tunIfName, 5*time.Second); err != nil {
+			log.Printf("Warning: tun interface %s not found after start: %v", tm.tunIfName, err)
+		} else if err := addInterfaceToTrustedZone(tm.tunIfName); err != nil {
+			log.Printf("Warning: failed to add interface %s to trusted zone: %v", tm.tunIfName, err)
+		} else {
+			log.Printf("Added interface %s to firewalld trusted zone", tm.tunIfName)
+		}
+	}
+
 	return map[string]interface{}{
-		"status":       "started",
-		"pid":          tm.process.Pid,
-		"singbox_path": tm.singboxPath,
-		"config_path":  tm.configPath,
+		"status":        "started",
+		"pid":           tm.process.Pid,
+		"singbox_path":  tm.singboxPath,
+		"config_path":   tm.configPath,
+		"tun_interface": tm.tunIfName,
 	}
 }
 
@@ -141,6 +161,15 @@ func (tm *TunnelManager) Stop() map[string]interface{} {
 	defer tm.mu.Unlock()
 
 	if !tm.isRunning {
+		if tm.tunIfName != "" {
+			if err := removeInterfaceFromTrustedZone(tm.tunIfName); err != nil {
+				log.Printf("Warning: failed to remove interface %s from trusted zone: %v", tm.tunIfName, err)
+			} else {
+				log.Printf("Removed interface %s from firewalld trusted zone", tm.tunIfName)
+			}
+			tm.tunIfName = ""
+		}
+
 		return map[string]interface{}{
 			"status": "not_running",
 		}
@@ -170,6 +199,15 @@ func (tm *TunnelManager) Stop() map[string]interface{} {
 
 	tm.process = nil
 	tm.isRunning = false
+
+	if tm.tunIfName != "" {
+		if err := removeInterfaceFromTrustedZone(tm.tunIfName); err != nil {
+			log.Printf("Warning: failed to remove interface %s from trusted zone: %v", tm.tunIfName, err)
+		} else {
+			log.Printf("Removed interface %s from firewalld trusted zone", tm.tunIfName)
+		}
+		tm.tunIfName = ""
+	}
 
 	log.Println("Tunnel stopped")
 
@@ -203,10 +241,11 @@ func (tm *TunnelManager) GetStatus() map[string]interface{} {
 		defer tm.mu.Unlock()
 
 		return map[string]interface{}{
-			"status":       "running",
-			"pid":          tm.process.Pid,
-			"singbox_path": tm.singboxPath,
-			"config_path":  tm.configPath,
+			"status":        "running",
+			"pid":           tm.process.Pid,
+			"singbox_path":  tm.singboxPath,
+			"config_path":   tm.configPath,
+			"tun_interface": tm.tunIfName,
 		}
 	}
 
@@ -361,6 +400,77 @@ func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func respondJSON(w http.ResponseWriter, code int, data interface{}) {
 	w.WriteHeader(code)
 	json.NewEncoder(w).Encode(data)
+}
+
+func getTunInterfaceNameFromConfig(configPath string) (string, error) {
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return "", fmt.Errorf("read config: %w", err)
+	}
+
+	var cfg struct {
+		Inbounds []struct {
+			Type          string `json:"type"`
+			InterfaceName string `json:"interface_name"`
+		} `json:"inbounds"`
+	}
+
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return "", fmt.Errorf("parse config: %w", err)
+	}
+
+	for _, inbound := range cfg.Inbounds {
+		if inbound.Type == "tun" && inbound.InterfaceName != "" {
+			return inbound.InterfaceName, nil
+		}
+	}
+
+	return "", fmt.Errorf("tun inbound with interface_name not found")
+}
+
+func waitForInterface(iface string, timeout time.Duration) error {
+	if iface == "" {
+		return fmt.Errorf("empty interface name")
+	}
+
+	deadline := time.Now().Add(timeout)
+	for {
+		if _, err := os.Stat(filepath.Join("/sys/class/net", iface)); err == nil {
+			return nil
+		}
+
+		if time.Now().After(deadline) {
+			return fmt.Errorf("interface %s did not appear within %s", iface, timeout)
+		}
+
+		time.Sleep(200 * time.Millisecond)
+	}
+}
+
+func addInterfaceToTrustedZone(iface string) error {
+	return runFirewallCmd("--zone=trusted", "--add-interface="+iface)
+}
+
+func removeInterfaceFromTrustedZone(iface string) error {
+	return runFirewallCmd("--zone=trusted", "--remove-interface="+iface)
+}
+
+func runFirewallCmd(args ...string) error {
+	if _, err := exec.LookPath("firewall-cmd"); err != nil {
+		return fmt.Errorf("firewall-cmd not found")
+	}
+
+	cmd := exec.Command("firewall-cmd", args...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		trimmed := strings.TrimSpace(string(out))
+		if trimmed == "" {
+			return err
+		}
+		return fmt.Errorf("%w: %s", err, trimmed)
+	}
+
+	return nil
 }
 
 func main() {
