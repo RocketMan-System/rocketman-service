@@ -3,4 +3,4 @@
 # Cross-compiles to Windows executable
 
 mkdir -p ./build/windows
-GOOS=windows GOARCH=amd64 go build -o ./build/windows/rocketman-tunnel-service.exe ./src/windows
+GOOS=windows GOARCH=amd64 go build -o ./build/windows/win_service.exe ./src/windows
