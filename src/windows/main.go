@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"os/user"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -56,6 +57,7 @@ type TunnelManager struct {
 	mu          sync.Mutex
 	singboxPath string
 	configPath  string
+	logPath     string
 	isRunning   bool
 	pgid        uint32
 }
@@ -80,6 +82,7 @@ func (tm *TunnelManager) Start(username, appname string) map[string]interface{} 
 	basePath := filepath.Join("C:\\Users", username, "AppData", "Roaming", appname, ".sing-box")
 	tm.singboxPath = filepath.Join(basePath, "sing-box.exe")
 	tm.configPath = filepath.Join(basePath, "sing-box-auto.json")
+	tm.logPath = filepath.Join(basePath, "sing-box-service.log")
 
 	if _, err := os.Stat(tm.singboxPath); os.IsNotExist(err) {
 		return map[string]interface{}{
@@ -96,6 +99,20 @@ func (tm *TunnelManager) Start(username, appname string) map[string]interface{} 
 	}
 
 	cmd := exec.Command(tm.singboxPath, "run", "-c", tm.configPath)
+	cmd.Dir = basePath
+	cmd.Env = buildChildEnv(username)
+
+	logFile, err := os.OpenFile(tm.logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return map[string]interface{}{
+			"status":  "error",
+			"message": fmt.Sprintf("Failed to open log file: %v", err),
+		}
+	}
+	defer logFile.Close()
+
+	cmd.Stdout = logFile
+	cmd.Stderr = logFile
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		CreationFlags: syscall.CREATE_NEW_PROCESS_GROUP | windows.CREATE_NO_WINDOW,
 		HideWindow:    true,
@@ -130,7 +147,51 @@ func (tm *TunnelManager) Start(username, appname string) map[string]interface{} 
 		"pid":          tm.process.Pid,
 		"singbox_path": tm.singboxPath,
 		"config_path":  tm.configPath,
+		"log_path":     tm.logPath,
 	}
+}
+
+func buildChildEnv(username string) []string {
+	env := append([]string{}, os.Environ()...)
+
+	if username == "" {
+		return env
+	}
+
+	profilePath := filepath.Join("C:\\Users", username)
+	roamingAppData := filepath.Join(profilePath, "AppData", "Roaming")
+	localAppData := filepath.Join(profilePath, "AppData", "Local")
+	tempPath := filepath.Join(localAppData, "Temp")
+
+	env = setEnvVar(env, "USERPROFILE", profilePath)
+	env = setEnvVar(env, "HOME", profilePath)
+	env = setEnvVar(env, "APPDATA", roamingAppData)
+	env = setEnvVar(env, "LOCALAPPDATA", localAppData)
+	env = setEnvVar(env, "TEMP", tempPath)
+	env = setEnvVar(env, "TMP", tempPath)
+
+	if u, err := user.Current(); err == nil && u != nil {
+		env = setEnvVar(env, "ROCKETMAN_SERVICE_USER", u.Username)
+	}
+
+	return env
+}
+
+func setEnvVar(env []string, key, value string) []string {
+	if key == "" {
+		return env
+	}
+
+	prefix := strings.ToUpper(key) + "="
+	for i, item := range env {
+		upper := strings.ToUpper(item)
+		if strings.HasPrefix(upper, prefix) {
+			env[i] = key + "=" + value
+			return env
+		}
+	}
+
+	return append(env, key+"="+value)
 }
 
 // checkAliveNoLock checks process liveness without acquiring the mutex
@@ -218,6 +279,7 @@ func (tm *TunnelManager) GetStatus() map[string]interface{} {
 			"pid":          tm.process.Pid,
 			"singbox_path": tm.singboxPath,
 			"config_path":  tm.configPath,
+			"log_path":     tm.logPath,
 		}
 	}
 
