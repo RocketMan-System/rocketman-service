@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -19,28 +20,36 @@ import (
 
 // Configuration
 const (
-	APP_PATH                    = "/Applications/RocketMan Proxy Bridge.app"
-	QUARANTINE_CHECK_INTERVAL   = 5 * time.Second
-	QUARANTINE_REMOVAL_ENABLED  = true
+	APP_PATH                   = "/Applications/RocketMan Proxy Bridge.app"
+	QUARANTINE_CHECK_INTERVAL  = 5 * time.Second
+	QUARANTINE_REMOVAL_ENABLED = true
 )
 
-// TunnelManager manages the sing-box process
+// recentLogs is the process-wide log store (shared with the HTTP /logs endpoint).
+var recentLogs = shared.NewRecentLogStore(shared.LOG_RETENTION, shared.LOG_MAX_ITEMS)
+
+// ---------------------------------------------------------------------------
+// TunnelManager — macOS-specific (Setsid + unix signals)
+// ---------------------------------------------------------------------------
+
+// TunnelManager manages the sing-box process on macOS.
 type TunnelManager struct {
 	process     *os.Process
 	mu          sync.Mutex
 	singboxPath string
 	configPath  string
+	logWriter   *shared.SingboxLogWriter
 	isRunning   bool
 }
 
-// NewTunnelManager creates a new tunnel manager
+// NewTunnelManager creates a new tunnel manager.
 func NewTunnelManager() *TunnelManager {
 	return &TunnelManager{
-		isRunning: false,
+		logWriter: &shared.SingboxLogWriter{Store: recentLogs},
 	}
 }
 
-// Start starts the tunnel with given parameters
+// Start starts the tunnel with given parameters.
 func (tm *TunnelManager) Start(username, appname string) map[string]interface{} {
 	tm.mu.Lock()
 	defer tm.mu.Unlock()
@@ -52,10 +61,8 @@ func (tm *TunnelManager) Start(username, appname string) map[string]interface{} 
 		}
 	}
 
-	// Build paths
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
-		// Fallback to /Users/{username}
 		homeDir = filepath.Join("/Users", username)
 	}
 
@@ -63,7 +70,6 @@ func (tm *TunnelManager) Start(username, appname string) map[string]interface{} 
 	tm.singboxPath = filepath.Join(basePath, "sing-box")
 	tm.configPath = filepath.Join(basePath, "sing-box-auto.json")
 
-	// Check if files exist
 	if _, err := os.Stat(tm.singboxPath); os.IsNotExist(err) {
 		return map[string]interface{}{
 			"status":  "error",
@@ -78,13 +84,13 @@ func (tm *TunnelManager) Start(username, appname string) map[string]interface{} 
 		}
 	}
 
-	// Start sing-box process
 	cmd := exec.Command(tm.singboxPath, "run", "-c", tm.configPath)
 	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Setsid: true, // Create new process group
+		Setsid: true, // new session / process group
 	}
+	cmd.Stdout = io.MultiWriter(os.Stdout, tm.logWriter)
+	cmd.Stderr = io.MultiWriter(os.Stderr, tm.logWriter)
 
-	// Start the process
 	if err := cmd.Start(); err != nil {
 		return map[string]interface{}{
 			"status":  "error",
@@ -95,11 +101,9 @@ func (tm *TunnelManager) Start(username, appname string) map[string]interface{} 
 	tm.process = cmd.Process
 	tm.isRunning = true
 
-	// Give process time to start
 	time.Sleep(500 * time.Millisecond)
 
-	// Check if process is still running
-	if err := tm.process.Signal(syscall.Signal(0)); err != nil {
+	if !shared.IsProcessAlive(tm.process) {
 		tm.isRunning = false
 		return map[string]interface{}{
 			"status":  "error",
@@ -107,7 +111,7 @@ func (tm *TunnelManager) Start(username, appname string) map[string]interface{} 
 		}
 	}
 
-	log.Printf("Tunnel started: PID=%d, singbox=%s, config=%s", 
+	log.Printf("Tunnel started: PID=%d, singbox=%s, config=%s",
 		tm.process.Pid, tm.singboxPath, tm.configPath)
 
 	return map[string]interface{}{
@@ -118,50 +122,25 @@ func (tm *TunnelManager) Start(username, appname string) map[string]interface{} 
 	}
 }
 
-// Stop stops the tunnel
+// Stop stops the tunnel.
 func (tm *TunnelManager) Stop() map[string]interface{} {
 	tm.mu.Lock()
 	defer tm.mu.Unlock()
 
 	if !tm.isRunning {
-		return map[string]interface{}{
-			"status": "not_running",
-		}
+		return map[string]interface{}{"status": "not_running"}
 	}
 
-	// Send SIGTERM
-	if err := tm.process.Signal(syscall.SIGTERM); err != nil {
-		log.Printf("Error sending SIGTERM: %v", err)
-	}
-
-	// Wait for process to exit (with timeout)
-	done := make(chan error, 1)
-	go func() {
-		_, err := tm.process.Wait()
-		done <- err
-	}()
-
-	select {
-	case <-done:
-		// Process exited gracefully
-	case <-time.After(5 * time.Second):
-		// Timeout - force kill
-		log.Println("Process didn't exit gracefully, sending SIGKILL")
-		tm.process.Signal(syscall.SIGKILL)
-		tm.process.Wait()
-	}
+	shared.GracefulStop(tm.process, 5*time.Second)
 
 	tm.process = nil
 	tm.isRunning = false
 
 	log.Println("Tunnel stopped")
-
-	return map[string]interface{}{
-		"status": "stopped",
-	}
+	return map[string]interface{}{"status": "stopped"}
 }
 
-// IsRunning checks if tunnel is running
+// IsRunning checks if tunnel is running.
 func (tm *TunnelManager) IsRunning() bool {
 	tm.mu.Lock()
 	defer tm.mu.Unlock()
@@ -170,8 +149,7 @@ func (tm *TunnelManager) IsRunning() bool {
 		return false
 	}
 
-	// Check if process is still alive
-	if err := tm.process.Signal(syscall.Signal(0)); err != nil {
+	if !shared.IsProcessAlive(tm.process) {
 		tm.isRunning = false
 		return false
 	}
@@ -179,12 +157,12 @@ func (tm *TunnelManager) IsRunning() bool {
 	return true
 }
 
-// GetStatus returns tunnel status
+// GetStatus returns tunnel status.
 func (tm *TunnelManager) GetStatus() map[string]interface{} {
 	if tm.IsRunning() {
 		tm.mu.Lock()
 		defer tm.mu.Unlock()
-		
+
 		return map[string]interface{}{
 			"status":       "running",
 			"pid":          tm.process.Pid,
@@ -193,12 +171,13 @@ func (tm *TunnelManager) GetStatus() map[string]interface{} {
 		}
 	}
 
-	return map[string]interface{}{
-		"status": "stopped",
-	}
+	return map[string]interface{}{"status": "stopped"}
 }
 
-// PlatformHTTPHandler wraps TunnelManager to implement shared.ITunnelOperations
+// ---------------------------------------------------------------------------
+// PlatformHTTPHandler — bridges shared.ITunnelOperations ↔ TunnelManager
+// ---------------------------------------------------------------------------
+
 type PlatformHTTPHandler struct {
 	tunnelManager *TunnelManager
 }
@@ -215,7 +194,11 @@ func (h *PlatformHTTPHandler) GetStatus() map[string]interface{} {
 	return h.tunnelManager.GetStatus()
 }
 
-// QuarantineMonitor automatically checks and removes quarantine from app
+// ---------------------------------------------------------------------------
+// macOS-specific: QuarantineMonitor
+// ---------------------------------------------------------------------------
+
+// QuarantineMonitor automatically removes com.apple.quarantine from the app bundle.
 type QuarantineMonitor struct {
 	appPath       string
 	checkInterval time.Duration
@@ -224,7 +207,7 @@ type QuarantineMonitor struct {
 	wg            sync.WaitGroup
 }
 
-// NewQuarantineMonitor creates a new quarantine monitor
+// NewQuarantineMonitor creates a new quarantine monitor.
 func NewQuarantineMonitor(appPath string, checkInterval time.Duration, enabled bool) *QuarantineMonitor {
 	return &QuarantineMonitor{
 		appPath:       appPath,
@@ -234,14 +217,13 @@ func NewQuarantineMonitor(appPath string, checkInterval time.Duration, enabled b
 	}
 }
 
-// Start starts quarantine monitoring
+// Start starts quarantine monitoring.
 func (qm *QuarantineMonitor) Start() {
 	if !qm.enabled {
 		log.Println("Quarantine removal is disabled")
 		return
 	}
 
-	// Check if app path exists
 	if _, err := os.Stat(qm.appPath); os.IsNotExist(err) {
 		log.Printf("App path does not exist, quarantine monitor disabled: %s", qm.appPath)
 		return
@@ -252,7 +234,7 @@ func (qm *QuarantineMonitor) Start() {
 	log.Printf("Quarantine monitor started for: %s (check interval: %v)", qm.appPath, qm.checkInterval)
 }
 
-// Stop stops quarantine monitoring
+// Stop stops quarantine monitoring.
 func (qm *QuarantineMonitor) Stop() {
 	if !qm.enabled {
 		return
@@ -262,41 +244,34 @@ func (qm *QuarantineMonitor) Stop() {
 	log.Println("Quarantine monitor stopped")
 }
 
-// hasQuarantine checks if app has quarantine attribute
 func (qm *QuarantineMonitor) hasQuarantine() bool {
 	cmd := exec.Command("xattr", "-p", "com.apple.quarantine", qm.appPath)
-	err := cmd.Run()
-	// If command succeeds (exit code 0), attribute exists
-	return err == nil
+	return cmd.Run() == nil
 }
 
-// removeQuarantine removes quarantine attribute from app
 func (qm *QuarantineMonitor) removeQuarantine() error {
 	log.Printf("Removing quarantine from: %s", qm.appPath)
-	
+
 	cmd := exec.Command("xattr", "-rd", "com.apple.quarantine", qm.appPath)
 	output, err := cmd.CombinedOutput()
-	
 	if err != nil {
 		return fmt.Errorf("failed to remove quarantine: %v, output: %s", err, string(output))
 	}
-	
-	log.Printf("✓ Quarantine removed successfully from: %s", qm.appPath)
+
+	log.Printf("Quarantine removed successfully from: %s", qm.appPath)
 	return nil
 }
 
-// monitorLoop is the main monitoring loop
 func (qm *QuarantineMonitor) monitorLoop() {
 	defer qm.wg.Done()
 
-	// Check immediately on start
 	if qm.hasQuarantine() {
-		log.Printf("⚠ Quarantine detected on startup: %s", qm.appPath)
+		log.Printf("Quarantine detected on startup: %s", qm.appPath)
 		if err := qm.removeQuarantine(); err != nil {
 			log.Printf("Error removing quarantine: %v", err)
 		}
 	} else {
-		log.Printf("✓ No quarantine detected: %s", qm.appPath)
+		log.Printf("No quarantine detected: %s", qm.appPath)
 	}
 
 	ticker := time.NewTicker(qm.checkInterval)
@@ -308,7 +283,7 @@ func (qm *QuarantineMonitor) monitorLoop() {
 			return
 		case <-ticker.C:
 			if qm.hasQuarantine() {
-				log.Printf("⚠ Quarantine detected: %s", qm.appPath)
+				log.Printf("Quarantine detected: %s", qm.appPath)
 				if err := qm.removeQuarantine(); err != nil {
 					log.Printf("Error removing quarantine: %v", err)
 				}
@@ -317,8 +292,11 @@ func (qm *QuarantineMonitor) monitorLoop() {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// main
+// ---------------------------------------------------------------------------
+
 func main() {
-	// Parse flags
 	versionFlag := flag.Bool("version", false, "Print version and exit")
 	flag.Parse()
 
@@ -328,27 +306,23 @@ func main() {
 	}
 
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
+	log.SetOutput(io.MultiWriter(os.Stderr, &shared.LogMirrorWriter{Store: recentLogs}))
 	log.Println("RocketMan Tunnel Service starting...")
 
-	// Create tunnel manager
 	tunnelManager := NewTunnelManager()
-
-	// Create app monitor using shared
 	appMonitor := shared.NewAppMonitor(tunnelManager, shared.APP_PING_URL, shared.APP_CHECK_INTERVAL)
 	appMonitor.Start()
 
-	// Create quarantine monitor
 	quarantineMonitor := NewQuarantineMonitor(APP_PATH, QUARANTINE_CHECK_INTERVAL, QUARANTINE_REMOVAL_ENABLED)
 	quarantineMonitor.Start()
 
-	// Create HTTP server using shared handler
-	handler := shared.NewHTTPHandler(&PlatformHTTPHandler{tunnelManager: tunnelManager})
+	platformHandler := &PlatformHTTPHandler{tunnelManager: tunnelManager}
+	handler := shared.NewHTTPHandlerWithLogs(platformHandler, recentLogs, shared.LOG_RETENTION, shared.LOG_TITLE)
 	server := &http.Server{
 		Addr:    fmt.Sprintf("127.0.0.1:%d", shared.HTTP_PORT),
 		Handler: handler,
 	}
 
-	// Start server in goroutine
 	go func() {
 		log.Printf("HTTP server listening on port %d", shared.HTTP_PORT)
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -356,14 +330,12 @@ func main() {
 		}
 	}()
 
-	// Wait for interrupt signal
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-
 	<-sigChan
+
 	log.Println("Shutdown signal received, stopping service...")
 
-	// Graceful shutdown
 	quarantineMonitor.Stop()
 	appMonitor.Stop()
 	tunnelManager.Stop()

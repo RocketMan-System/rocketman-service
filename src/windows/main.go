@@ -4,10 +4,8 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"flag"
 	"fmt"
-	"html"
 	"io"
 	"log"
 	"net/http"
@@ -29,7 +27,6 @@ import (
 	"github.com/xanderwp/proxybridgeservice/src/shared"
 )
 
-// Configuration
 const (
 	SERVICE_NAME         = "RocketMan_Tun_Service"
 	SERVICE_DISPLAY_NAME = "RocketMan Tunnel Service"
@@ -38,132 +35,12 @@ const (
 
 var elog *eventlog.Log
 
-const LOG_RETENTION = 2 * time.Hour
+// recentLogs is the process-wide log store (shared with the HTTP /logs endpoint).
+var recentLogs = shared.NewRecentLogStore(shared.LOG_RETENTION, shared.LOG_MAX_ITEMS)
 
-type LogEntry struct {
-	Time    time.Time `json:"time"`
-	Level   string    `json:"level"`
-	Source  string    `json:"source"` // "main" or "sing-box"
-	Message string    `json:"message"`
-}
-
-type RecentLogStore struct {
-	mu        sync.Mutex
-	retention time.Duration
-	maxItems  int
-	entries   []LogEntry
-}
-
-func NewRecentLogStore(retention time.Duration, maxItems int) *RecentLogStore {
-	return &RecentLogStore{
-		retention: retention,
-		maxItems:  maxItems,
-		entries:   make([]LogEntry, 0, 256),
-	}
-}
-
-func (s *RecentLogStore) Add(level, source, msg string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	now := time.Now()
-	s.entries = append(s.entries, LogEntry{
-		Time:    now,
-		Level:   level,
-		Source:  source,
-		Message: strings.TrimSpace(msg),
-	})
-
-	s.pruneNoLock(now)
-
-	if len(s.entries) > s.maxItems {
-		overflow := len(s.entries) - s.maxItems
-		s.entries = append([]LogEntry(nil), s.entries[overflow:]...)
-	}
-}
-
-func (s *RecentLogStore) Last(duration time.Duration, sourceFilter string) []LogEntry {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	now := time.Now()
-	s.pruneNoLock(now)
-
-	if len(s.entries) == 0 {
-		return nil
-	}
-
-	threshold := now.Add(-duration)
-	var result []LogEntry
-	// Loop backwards to get newest items first
-	for i := len(s.entries) - 1; i >= 0; i-- {
-		e := s.entries[i]
-		if e.Time.After(threshold) {
-			if sourceFilter == "" || sourceFilter == "all" || e.Source == sourceFilter {
-				result = append(result, e)
-			}
-		}
-	}
-	return result
-}
-
-func (s *RecentLogStore) pruneNoLock(now time.Time) {
-	if len(s.entries) == 0 {
-		return
-	}
-
-	threshold := now.Add(-s.retention)
-	cut := 0
-	for cut < len(s.entries) && s.entries[cut].Time.Before(threshold) {
-		cut++
-	}
-
-	if cut > 0 {
-		s.entries = append([]LogEntry(nil), s.entries[cut:]...)
-	}
-}
-
-type logMirrorWriter struct {
-	store *RecentLogStore
-}
-
-func detectLogLevel(msg string) string {
-	upper := strings.ToUpper(msg)
-	if strings.Contains(upper, "ERROR") || strings.Contains(upper, "FATAL") || strings.Contains(upper, "PANIC") || strings.Contains(upper, "FAILED") {
-		return "ERROR"
-	}
-	if strings.Contains(upper, "WARN") {
-		return "WARN"
-	}
-	return "INFO"
-}
-
-func (w *logMirrorWriter) Write(p []byte) (n int, err error) {
-	msg := strings.TrimSpace(string(p))
-	if msg != "" {
-		w.store.Add(detectLogLevel(msg), "main", msg)
-	}
-
-	return len(p), nil
-}
-
-type singboxLogWriter struct {
-	store *RecentLogStore
-}
-
-func (w *singboxLogWriter) Write(p []byte) (n int, err error) {
-	text := string(p)
-	for _, line := range strings.Split(text, "\n") {
-		msg := strings.TrimSpace(line)
-		if msg == "" {
-			continue
-		}
-		w.store.Add(detectLogLevel(msg), "sing-box", msg)
-	}
-	return len(p), nil
-}
-
-var recentLogs = NewRecentLogStore(LOG_RETENTION, 10000)
+// ---------------------------------------------------------------------------
+// Platform-specific logging (Windows Event Log integration)
+// ---------------------------------------------------------------------------
 
 func logInfo(msg string) {
 	log.Println(msg)
@@ -181,7 +58,11 @@ func logError(msg string) {
 	}
 }
 
-// TunnelManager manages the sing-box process
+// ---------------------------------------------------------------------------
+// TunnelManager — Windows-specific (Windows API for process lifecycle)
+// ---------------------------------------------------------------------------
+
+// TunnelManager manages the sing-box process on Windows.
 type TunnelManager struct {
 	process     *os.Process
 	mu          sync.Mutex
@@ -189,17 +70,17 @@ type TunnelManager struct {
 	configPath  string
 	logPath     string
 	logFile     *os.File
-	logWriter   *singboxLogWriter
+	logWriter   *shared.SingboxLogWriter
 	isRunning   bool
 	pgid        uint32
 }
 
-// NewTunnelManager creates a new tunnel manager
+// NewTunnelManager creates a new tunnel manager.
 func NewTunnelManager() *TunnelManager {
 	return &TunnelManager{}
 }
 
-// Start starts the tunnel with given parameters
+// Start starts the tunnel with given parameters.
 func (tm *TunnelManager) Start(username, appname string) map[string]interface{} {
 	tm.mu.Lock()
 	defer tm.mu.Unlock()
@@ -248,7 +129,7 @@ func (tm *TunnelManager) Start(username, appname string) map[string]interface{} 
 		}
 	}
 	tm.logFile = logFile
-	tm.logWriter = &singboxLogWriter{store: recentLogs}
+	tm.logWriter = &shared.SingboxLogWriter{Store: recentLogs}
 
 	cmd.Stdout = io.MultiWriter(logFile, tm.logWriter)
 	cmd.Stderr = io.MultiWriter(logFile, tm.logWriter)
@@ -300,6 +181,129 @@ func (tm *TunnelManager) Start(username, appname string) map[string]interface{} 
 	}
 }
 
+// checkAliveNoLock checks process liveness without acquiring the mutex.
+// Uses Windows API (GetExitCodeProcess) instead of signals.
+func (tm *TunnelManager) checkAliveNoLock() bool {
+	if tm.process == nil {
+		return false
+	}
+
+	handle, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, uint32(tm.process.Pid))
+	if err != nil {
+		return false
+	}
+	defer windows.CloseHandle(handle)
+
+	var exitCode uint32
+	if err := windows.GetExitCodeProcess(handle, &exitCode); err != nil {
+		return false
+	}
+
+	const STILL_ACTIVE = 259
+	return exitCode == STILL_ACTIVE
+}
+
+// Stop stops the tunnel using Windows CTRL_BREAK_EVENT.
+func (tm *TunnelManager) Stop() map[string]interface{} {
+	tm.mu.Lock()
+	defer tm.mu.Unlock()
+
+	logInfo("Tunnel stop requested")
+
+	if !tm.isRunning {
+		logInfo("Tunnel is not running")
+		return map[string]interface{}{"status": "not_running"}
+	}
+
+	// Graceful shutdown via CTRL_BREAK_EVENT
+	dll := syscall.NewLazyDLL("kernel32.dll")
+	proc := dll.NewProc("GenerateConsoleCtrlEvent")
+	proc.Call(uintptr(1), uintptr(tm.pgid)) // 1 = CTRL_BREAK_EVENT
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := tm.process.Wait()
+		done <- err
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		logError("Process didn't exit gracefully, killing")
+		tm.process.Kill()
+		tm.process.Wait()
+	}
+
+	if tm.logFile != nil {
+		_ = tm.logFile.Close()
+		tm.logFile = nil
+	}
+	tm.logWriter = nil
+	tm.process = nil
+	tm.isRunning = false
+	logInfo("Tunnel stopped")
+
+	return map[string]interface{}{"status": "stopped"}
+}
+
+// IsRunning checks if tunnel is running.
+func (tm *TunnelManager) IsRunning() bool {
+	tm.mu.Lock()
+	defer tm.mu.Unlock()
+
+	if !tm.isRunning {
+		return false
+	}
+
+	alive := tm.checkAliveNoLock()
+	if !alive {
+		tm.isRunning = false
+	}
+	return alive
+}
+
+// GetStatus returns tunnel status.
+func (tm *TunnelManager) GetStatus() map[string]interface{} {
+	if tm.IsRunning() {
+		tm.mu.Lock()
+		defer tm.mu.Unlock()
+
+		return map[string]interface{}{
+			"status":       "running",
+			"pid":          tm.process.Pid,
+			"singbox_path": tm.singboxPath,
+			"config_path":  tm.configPath,
+			"log_path":     tm.logPath,
+		}
+	}
+
+	return map[string]interface{}{"status": "stopped"}
+}
+
+// ---------------------------------------------------------------------------
+// PlatformHTTPHandler — bridges shared.ITunnelOperations ↔ TunnelManager
+// ---------------------------------------------------------------------------
+
+type PlatformHTTPHandler struct {
+	tunnelManager *TunnelManager
+}
+
+func (h *PlatformHTTPHandler) Start(username, appname string) map[string]interface{} {
+	return h.tunnelManager.Start(username, appname)
+}
+
+func (h *PlatformHTTPHandler) Stop() map[string]interface{} {
+	return h.tunnelManager.Stop()
+}
+
+func (h *PlatformHTTPHandler) GetStatus() map[string]interface{} {
+	return h.tunnelManager.GetStatus()
+}
+
+// ---------------------------------------------------------------------------
+// Windows environment helpers
+// ---------------------------------------------------------------------------
+
 func buildChildEnv(username string) []string {
 	env := append([]string{}, os.Environ()...)
 
@@ -333,8 +337,7 @@ func setEnvVar(env []string, key, value string) []string {
 
 	prefix := strings.ToUpper(key) + "="
 	for i, item := range env {
-		upper := strings.ToUpper(item)
-		if strings.HasPrefix(upper, prefix) {
+		if strings.HasPrefix(strings.ToUpper(item), prefix) {
 			env[i] = key + "=" + value
 			return env
 		}
@@ -343,267 +346,10 @@ func setEnvVar(env []string, key, value string) []string {
 	return append(env, key+"="+value)
 }
 
-// checkAliveNoLock checks process liveness without acquiring the mutex
-func (tm *TunnelManager) checkAliveNoLock() bool {
-	if tm.process == nil {
-		return false
-	}
+// ---------------------------------------------------------------------------
+// Windows Service implementation
+// ---------------------------------------------------------------------------
 
-	handle, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, uint32(tm.process.Pid))
-	if err != nil {
-		return false
-	}
-	defer windows.CloseHandle(handle)
-
-	var exitCode uint32
-	if err := windows.GetExitCodeProcess(handle, &exitCode); err != nil {
-		return false
-	}
-
-	const STILL_ACTIVE = 259
-	return exitCode == STILL_ACTIVE
-}
-
-// Stop stops the tunnel
-func (tm *TunnelManager) Stop() map[string]interface{} {
-	tm.mu.Lock()
-	defer tm.mu.Unlock()
-
-	logInfo("Tunnel stop requested")
-
-	if !tm.isRunning {
-		logInfo("Tunnel is not running")
-		return map[string]interface{}{"status": "not_running"}
-	}
-
-	// Send CTRL_BREAK_EVENT for graceful shutdown
-	dll := syscall.NewLazyDLL("kernel32.dll")
-	proc := dll.NewProc("GenerateConsoleCtrlEvent")
-	proc.Call(uintptr(1), uintptr(tm.pgid)) // 1 = CTRL_BREAK_EVENT
-
-	done := make(chan error, 1)
-	go func() {
-		_, err := tm.process.Wait()
-		done <- err
-	}()
-
-	select {
-	case <-done:
-		// Process exited gracefully
-	case <-time.After(5 * time.Second):
-		logError("Process didn't exit gracefully, killing")
-		tm.process.Kill()
-		tm.process.Wait()
-	}
-
-	if tm.logFile != nil {
-		_ = tm.logFile.Close()
-		tm.logFile = nil
-	}
-	tm.logWriter = nil
-	tm.process = nil
-	tm.isRunning = false
-	logInfo("Tunnel stopped")
-
-	return map[string]interface{}{"status": "stopped"}
-}
-
-// IsRunning checks if tunnel is running
-func (tm *TunnelManager) IsRunning() bool {
-	tm.mu.Lock()
-	defer tm.mu.Unlock()
-
-	if !tm.isRunning {
-		return false
-	}
-
-	alive := tm.checkAliveNoLock()
-	if !alive {
-		tm.isRunning = false
-	}
-
-	return alive
-}
-
-// GetStatus returns tunnel status
-func (tm *TunnelManager) GetStatus() map[string]interface{} {
-	if tm.IsRunning() {
-		tm.mu.Lock()
-		defer tm.mu.Unlock()
-
-		return map[string]interface{}{
-			"status":       "running",
-			"pid":          tm.process.Pid,
-			"singbox_path": tm.singboxPath,
-			"config_path":  tm.configPath,
-			"log_path":     tm.logPath,
-		}
-	}
-
-	return map[string]interface{}{"status": "stopped"}
-}
-
-// PlatformHTTPHandler wraps TunnelManager to implement shared.ITunnelOperations
-type PlatformHTTPHandler struct {
-	tunnelManager *TunnelManager
-}
-
-func (h *PlatformHTTPHandler) Start(username, appname string) map[string]interface{} {
-	return h.tunnelManager.Start(username, appname)
-}
-
-func (h *PlatformHTTPHandler) Stop() map[string]interface{} {
-	return h.tunnelManager.Stop()
-}
-
-func (h *PlatformHTTPHandler) GetStatus() map[string]interface{} {
-	return h.tunnelManager.GetStatus()
-}
-
-// HTTPHandler handles HTTP control requests
-type HTTPHandler struct {
-	tunnelManager *TunnelManager
-}
-
-func renderLogsHTML(entries []LogEntry, currentSource string) string {
-	var b strings.Builder
-
-	b.WriteString("<!doctype html><html><head><meta charset=\"utf-8\"><title>RocketMan Logs</title>")
-	b.WriteString("<style>")
-	b.WriteString("body{font-family:Segoe UI,Arial,sans-serif;background:#f5f7fb;color:#1f2937;margin:0;padding:24px;}")
-	b.WriteString(".wrap{max-width:1200px;margin:0 auto;background:#fff;border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,.08);overflow:hidden;}")
-	b.WriteString(".head{padding:16px 20px;border-bottom:1px solid #e5e7eb;display:flex;justify-content:space-between;align-items:center;}")
-	b.WriteString("h1{font-size:20px;margin:0;} .meta{font-size:13px;color:#6b7280;} .tools{display:flex;gap:15px;align-items:center;}")
-	b.WriteString(".tools a{color:#2563eb;text-decoration:none;font-size:13px;}")
-	b.WriteString("select{padding:4px 8px;border-radius:4px;border:1px solid #d1d5db;font-size:13px;outline:none;cursor:pointer;}")
-	b.WriteString("table{width:100%;border-collapse:collapse;} th,td{padding:10px 12px;border-bottom:1px solid #f1f5f9;vertical-align:top;font-size:13px;}")
-	b.WriteString("th{background:#f8fafc;text-align:left;color:#334155;font-weight:600;position:sticky;top:0;}")
-	b.WriteString(".lvl{display:inline-block;padding:2px 8px;border-radius:999px;font-weight:600;font-size:11px;}")
-	b.WriteString(".lvl-info{background:#dbeafe;color:#1d4ed8;} .lvl-error{background:#fee2e2;color:#b91c1c;} .lvl-warn{background:#ffedd5;color:#9a3412;}")
-	b.WriteString(".src{font-size:11px;color:#6b7280;text-transform:uppercase;font-weight:bold;}")
-	b.WriteString(".msg{white-space:pre-wrap;word-break:break-word;font-family:Consolas,monospace;}")
-	b.WriteString("</style></head><body>")
-	b.WriteString("<div class=\"wrap\"><div class=\"head\"><div><h1>RocketMan Service Logs</h1>")
-	b.WriteString(fmt.Sprintf("<div class=\"meta\">Last 2 hours • Entries: %d • Updated: %s</div>",
-		len(entries), html.EscapeString(time.Now().Format("2006-01-02 15:04:05"))))
-	b.WriteString("</div><div class=\"tools\">")
-
-	// Source Selector
-	b.WriteString("<select onchange=\"window.location.href='/logs?source='+this.value\">")
-	sources := []struct{ val, label string }{{"all", "All Sources"}, {"main", "Main Service"}, {"sing-box", "Sing-box"}}
-	for _, s := range sources {
-		selected := ""
-		if currentSource == s.val {
-			selected = " selected"
-		}
-		b.WriteString(fmt.Sprintf("<option value=\"%s\"%s>%s</option>", s.val, selected, s.label))
-	}
-	b.WriteString("</select>")
-
-	refreshURL := "/logs"
-	if currentSource != "all" && currentSource != "" {
-		refreshURL = "/logs?source=" + currentSource
-	}
-	jsonURL := "/logs?format=json"
-	if currentSource != "all" && currentSource != "" {
-		jsonURL += "&source=" + currentSource
-	}
-
-	b.WriteString(fmt.Sprintf("<a href=\"%s\">JSON</a> • <a href=\"%s\">Refresh</a></div></div>", jsonURL, refreshURL))
-	b.WriteString("<table><thead><tr><th style=\"width:150px\">Time</th><th style=\"width:80px\">Source</th><th style=\"width:80px\">Level</th><th>Message</th></tr></thead><tbody>")
-
-	for _, entry := range entries {
-		lvlClass := "lvl-info"
-		if strings.EqualFold(entry.Level, "ERROR") {
-			lvlClass = "lvl-error"
-		} else if strings.EqualFold(entry.Level, "WARN") {
-			lvlClass = "lvl-warn"
-		}
-
-		b.WriteString("<tr>")
-		b.WriteString("<td>" + html.EscapeString(entry.Time.Format("15:04:05.000")) + "</td>")
-		b.WriteString("<td><span class=\"src\">" + html.EscapeString(entry.Source) + "</span></td>")
-		b.WriteString("<td><span class=\"lvl " + lvlClass + "\">" + html.EscapeString(strings.ToUpper(entry.Level)) + "</span></td>")
-		b.WriteString("<td class=\"msg\">" + html.EscapeString(entry.Message) + "</td>")
-		b.WriteString("</tr>")
-	}
-
-	b.WriteString("</tbody></table></div>")
-	b.WriteString("<script>")
-	b.WriteString("const params = new URLSearchParams(window.location.search);")
-	b.WriteString("const source = params.get('source') || 'all';")
-	b.WriteString("setTimeout(function(){ if(source === 'all' || source === 'main' || source === 'sing-box') window.location.reload(); }, 5000);")
-	b.WriteString("</script>")
-	b.WriteString("</body></html>")
-	return b.String()
-}
-
-// ServeHTTP handles incoming HTTP requests
-func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-
-	switch r.URL.Path {
-	case "/logs":
-		source := r.URL.Query().Get("source")
-		if source == "" {
-			source = "all"
-		}
-		entries := recentLogs.Last(LOG_RETENTION, source)
-		if strings.EqualFold(r.URL.Query().Get("format"), "json") {
-			respondJSON(w, http.StatusOK, map[string]interface{}{
-				"status":      "ok",
-				"source":      source,
-				"retention":   LOG_RETENTION.String(),
-				"entry_count": len(entries),
-				"entries":     entries,
-			})
-			return
-		}
-
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(renderLogsHTML(entries, source)))
-		return
-
-	case "/start":
-		username := r.URL.Query().Get("username")
-		appname := r.URL.Query().Get("appname")
-		logInfo(fmt.Sprintf("HTTP /start called: username=%s appname=%s", username, appname))
-
-		if username == "" || appname == "" {
-			respondJSON(w, http.StatusBadRequest, map[string]interface{}{
-				"error": "Missing required parameters: username, appname",
-			})
-			return
-		}
-
-		result := h.tunnelManager.Start(username, appname)
-		respondJSON(w, http.StatusOK, result)
-
-	case "/stop":
-		logInfo("HTTP /stop called")
-		result := h.tunnelManager.Stop()
-		respondJSON(w, http.StatusOK, result)
-
-	case "/status":
-		result := h.tunnelManager.GetStatus()
-		respondJSON(w, http.StatusOK, result)
-
-	case "/ping":
-		respondJSON(w, http.StatusOK, map[string]interface{}{"status": "ok"})
-
-	default:
-		respondJSON(w, http.StatusNotFound, map[string]interface{}{"error": "Not found"})
-	}
-}
-
-// respondJSON sends a JSON response
-func respondJSON(w http.ResponseWriter, code int, data interface{}) {
-	w.WriteHeader(code)
-	json.NewEncoder(w).Encode(data)
-}
-
-// rmService implements svc.Handler
 type rmService struct {
 	tunnelManager *TunnelManager
 	appMonitor    *shared.AppMonitor
@@ -613,7 +359,8 @@ type rmService struct {
 func (s *rmService) Execute(args []string, r <-chan svc.ChangeRequest, changes chan<- svc.Status) (bool, uint32) {
 	changes <- svc.Status{State: svc.StartPending}
 
-	handler := &HTTPHandler{tunnelManager: s.tunnelManager}
+	platformHandler := &PlatformHTTPHandler{tunnelManager: s.tunnelManager}
+	handler := shared.NewHTTPHandlerWithLogs(platformHandler, recentLogs, shared.LOG_RETENTION, shared.LOG_TITLE)
 	s.httpServer = &http.Server{
 		Addr:    fmt.Sprintf("127.0.0.1:%d", shared.HTTP_PORT),
 		Handler: handler,
@@ -684,6 +431,10 @@ func runService(name string) {
 
 	logInfo("Windows service process stopped")
 }
+
+// ---------------------------------------------------------------------------
+// Service install / remove / start / stop helpers
+// ---------------------------------------------------------------------------
 
 func installService(name, displayName, desc string) error {
 	exePath, err := os.Executable()
@@ -793,6 +544,10 @@ func controlService(name string, c svc.Cmd, to svc.State) error {
 	return nil
 }
 
+// ---------------------------------------------------------------------------
+// main
+// ---------------------------------------------------------------------------
+
 func main() {
 	versionFlag := flag.Bool("version", false, "Print version and exit")
 	installFlag := flag.Bool("install", false, "Install the service")
@@ -802,9 +557,6 @@ func main() {
 	flag.Parse()
 
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
-	// Do NOT set log.SetOutput to MultiWriter with logMirrorWriter here,
-	// because logInfo/logError already call recentLogs.Add manually to avoid double logging.
-	
 	logInfo("Logger initialized with 2-hour retention")
 
 	if *versionFlag {
@@ -858,7 +610,7 @@ func main() {
 		return
 	}
 
-	// Interactive mode for debugging
+	// Interactive mode (debugging)
 	log.Println("Running interactively (not as Windows service)")
 	log.Println("RocketMan Tunnel Service starting...")
 
@@ -866,7 +618,8 @@ func main() {
 	appMonitor := shared.NewAppMonitor(tunnelManager, shared.APP_PING_URL, shared.APP_CHECK_INTERVAL)
 	appMonitor.Start()
 
-	handler := &HTTPHandler{tunnelManager: tunnelManager}
+	platformHandler := &PlatformHTTPHandler{tunnelManager: tunnelManager}
+	handler := shared.NewHTTPHandlerWithLogs(platformHandler, recentLogs, shared.LOG_RETENTION, shared.LOG_TITLE)
 	server := &http.Server{
 		Addr:    fmt.Sprintf("127.0.0.1:%d", shared.HTTP_PORT),
 		Handler: handler,

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -21,24 +22,32 @@ import (
 	"github.com/xanderwp/proxybridgeservice/src/shared"
 )
 
-// TunnelManager manages the sing-box process
+// recentLogs is the process-wide log store (shared with the HTTP /logs endpoint).
+var recentLogs = shared.NewRecentLogStore(shared.LOG_RETENTION, shared.LOG_MAX_ITEMS)
+
+// ---------------------------------------------------------------------------
+// TunnelManager — Linux-specific (firewalld + unix signals)
+// ---------------------------------------------------------------------------
+
+// TunnelManager manages the sing-box process on Linux.
 type TunnelManager struct {
 	process     *os.Process
 	mu          sync.Mutex
 	singboxPath string
 	configPath  string
 	tunIfName   string
+	logWriter   *shared.SingboxLogWriter
 	isRunning   bool
 }
 
-// NewTunnelManager creates a new tunnel manager
+// NewTunnelManager creates a new tunnel manager.
 func NewTunnelManager() *TunnelManager {
 	return &TunnelManager{
-		isRunning: false,
+		logWriter: &shared.SingboxLogWriter{Store: recentLogs},
 	}
 }
 
-// Start starts the tunnel with given parameters
+// Start starts the tunnel with given parameters.
 func (tm *TunnelManager) Start(username, appname string) map[string]interface{} {
 	tm.mu.Lock()
 	defer tm.mu.Unlock()
@@ -51,7 +60,7 @@ func (tm *TunnelManager) Start(username, appname string) map[string]interface{} 
 		}
 	}
 
-	// Resolve home directory by requested username to avoid using service user (root)
+	// Resolve home directory by requested username to avoid using service user (root).
 	homeDir := ""
 	if username != "" {
 		u, err := user.Lookup(username)
@@ -78,7 +87,6 @@ func (tm *TunnelManager) Start(username, appname string) map[string]interface{} 
 	tm.singboxPath = filepath.Join(basePath, "sing-box")
 	tm.configPath = filepath.Join(basePath, "sing-box-auto.json")
 
-	// Check if files exist
 	if _, err := os.Stat(tm.singboxPath); os.IsNotExist(err) {
 		return map[string]interface{}{
 			"status":  "error",
@@ -100,11 +108,12 @@ func (tm *TunnelManager) Start(username, appname string) map[string]interface{} 
 	}
 	tm.tunIfName = tunIfName
 
-	// Start sing-box process
 	cmd := exec.Command(tm.singboxPath, "run", "-c", tm.configPath)
 	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Setpgid: true, // Create new process group
+		Setpgid: true, // new process group
 	}
+	cmd.Stdout = io.MultiWriter(os.Stdout, tm.logWriter)
+	cmd.Stderr = io.MultiWriter(os.Stderr, tm.logWriter)
 
 	if err := cmd.Start(); err != nil {
 		return map[string]interface{}{
@@ -116,11 +125,9 @@ func (tm *TunnelManager) Start(username, appname string) map[string]interface{} 
 	tm.process = cmd.Process
 	tm.isRunning = true
 
-	// Give process time to start
 	time.Sleep(500 * time.Millisecond)
 
-	// Check if process is still alive
-	if err := tm.process.Signal(syscall.Signal(0)); err != nil {
+	if !shared.IsProcessAlive(tm.process) {
 		tm.isRunning = false
 		return map[string]interface{}{
 			"status":  "error",
@@ -154,7 +161,7 @@ func (tm *TunnelManager) Start(username, appname string) map[string]interface{} 
 	}
 }
 
-// Stop stops the tunnel
+// Stop stops the tunnel.
 func (tm *TunnelManager) Stop() map[string]interface{} {
 	tm.mu.Lock()
 	defer tm.mu.Unlock()
@@ -168,33 +175,10 @@ func (tm *TunnelManager) Stop() map[string]interface{} {
 			}
 			tm.tunIfName = ""
 		}
-
-		return map[string]interface{}{
-			"status": "not_running",
-		}
+		return map[string]interface{}{"status": "not_running"}
 	}
 
-	// Send SIGTERM first
-	if err := tm.process.Signal(syscall.SIGTERM); err != nil {
-		log.Printf("Error sending SIGTERM: %v", err)
-	}
-
-	// Wait for process to exit with timeout
-	done := make(chan error, 1)
-	go func() {
-		_, err := tm.process.Wait()
-		done <- err
-	}()
-
-	select {
-	case <-done:
-		// Process exited gracefully
-	case <-time.After(5 * time.Second):
-		// Timeout — force kill
-		log.Println("Process didn't exit gracefully, sending SIGKILL")
-		tm.process.Signal(syscall.SIGKILL)
-		tm.process.Wait()
-	}
+	shared.GracefulStop(tm.process, 5*time.Second)
 
 	tm.process = nil
 	tm.isRunning = false
@@ -209,13 +193,10 @@ func (tm *TunnelManager) Stop() map[string]interface{} {
 	}
 
 	log.Println("Tunnel stopped")
-
-	return map[string]interface{}{
-		"status": "stopped",
-	}
+	return map[string]interface{}{"status": "stopped"}
 }
 
-// IsRunning checks if tunnel is running
+// IsRunning checks if tunnel is running.
 func (tm *TunnelManager) IsRunning() bool {
 	tm.mu.Lock()
 	defer tm.mu.Unlock()
@@ -224,8 +205,7 @@ func (tm *TunnelManager) IsRunning() bool {
 		return false
 	}
 
-	// Check if process is still alive
-	if err := tm.process.Signal(syscall.Signal(0)); err != nil {
+	if !shared.IsProcessAlive(tm.process) {
 		tm.isRunning = false
 		return false
 	}
@@ -233,7 +213,7 @@ func (tm *TunnelManager) IsRunning() bool {
 	return true
 }
 
-// GetStatus returns tunnel status
+// GetStatus returns tunnel status.
 func (tm *TunnelManager) GetStatus() map[string]interface{} {
 	if tm.IsRunning() {
 		tm.mu.Lock()
@@ -248,12 +228,13 @@ func (tm *TunnelManager) GetStatus() map[string]interface{} {
 		}
 	}
 
-	return map[string]interface{}{
-		"status": "stopped",
-	}
+	return map[string]interface{}{"status": "stopped"}
 }
 
-// HTTPHandler wraps TunnelManager to implement shared.ITunnelOperations
+// ---------------------------------------------------------------------------
+// PlatformHTTPHandler — bridges shared.ITunnelOperations ↔ TunnelManager
+// ---------------------------------------------------------------------------
+
 type PlatformHTTPHandler struct {
 	tunnelManager *TunnelManager
 }
@@ -269,6 +250,10 @@ func (h *PlatformHTTPHandler) Stop() map[string]interface{} {
 func (h *PlatformHTTPHandler) GetStatus() map[string]interface{} {
 	return h.tunnelManager.GetStatus()
 }
+
+// ---------------------------------------------------------------------------
+// Linux-specific: tun interface config parsing and firewalld integration
+// ---------------------------------------------------------------------------
 
 func getTunInterfaceNameFromConfig(configPath string) (string, error) {
 	data, err := os.ReadFile(configPath)
@@ -306,14 +291,17 @@ func waitForInterface(iface string, timeout time.Duration) error {
 		if _, err := os.Stat(filepath.Join("/sys/class/net", iface)); err == nil {
 			return nil
 		}
-
 		if time.Now().After(deadline) {
 			return fmt.Errorf("interface %s did not appear within %s", iface, timeout)
 		}
-
 		time.Sleep(200 * time.Millisecond)
 	}
 }
+
+var (
+	errFirewallNotRunning = errors.New("firewalld not running")
+	errUnknownInterface   = errors.New("unknown interface")
+)
 
 func addInterfaceToTrustedZone(iface string) error {
 	return runFirewallCmd("--zone=trusted", "--add-interface="+iface)
@@ -348,11 +336,6 @@ func ensureInterfaceInTrustedZone(iface string, timeout time.Duration) (bool, er
 	}
 }
 
-var (
-	errFirewallNotRunning = errors.New("firewalld not running")
-	errUnknownInterface   = errors.New("unknown interface")
-)
-
 func runFirewallCmd(args ...string) error {
 	if _, err := exec.LookPath("firewall-cmd"); err != nil {
 		return errFirewallNotRunning
@@ -362,11 +345,9 @@ func runFirewallCmd(args ...string) error {
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		trimmed := strings.TrimSpace(string(out))
-		// exit 252: FirewallD is not running
 		if strings.Contains(trimmed, "FirewallD is not running") {
 			return errFirewallNotRunning
 		}
-		// exit 17: UNKNOWN_INTERFACE
 		if strings.Contains(trimmed, "UNKNOWN_INTERFACE") {
 			return fmt.Errorf("%w: %s", errUnknownInterface, trimmed)
 		}
@@ -379,6 +360,10 @@ func runFirewallCmd(args ...string) error {
 	return nil
 }
 
+// ---------------------------------------------------------------------------
+// main
+// ---------------------------------------------------------------------------
+
 func main() {
 	versionFlag := flag.Bool("version", false, "Print version and exit")
 	flag.Parse()
@@ -389,23 +374,20 @@ func main() {
 	}
 
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
+	log.SetOutput(io.MultiWriter(os.Stderr, &shared.LogMirrorWriter{Store: recentLogs}))
 	log.Println("RocketMan Tunnel Service starting...")
 
-	// Create tunnel manager
 	tunnelManager := NewTunnelManager()
-
-	// Create app monitor using shared
 	appMonitor := shared.NewAppMonitor(tunnelManager, shared.APP_PING_URL, shared.APP_CHECK_INTERVAL)
 	appMonitor.Start()
 
-	// Create HTTP server using shared handler
-	handler := shared.NewHTTPHandler(&PlatformHTTPHandler{tunnelManager: tunnelManager})
+	platformHandler := &PlatformHTTPHandler{tunnelManager: tunnelManager}
+	handler := shared.NewHTTPHandlerWithLogs(platformHandler, recentLogs, shared.LOG_RETENTION, shared.LOG_TITLE)
 	server := &http.Server{
 		Addr:    fmt.Sprintf("127.0.0.1:%d", shared.HTTP_PORT),
 		Handler: handler,
 	}
 
-	// Start server in goroutine
 	go func() {
 		log.Printf("HTTP server listening on port %d", shared.HTTP_PORT)
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -413,14 +395,12 @@ func main() {
 		}
 	}()
 
-	// Wait for interrupt or termination signal
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-
 	<-sigChan
+
 	log.Println("Shutdown signal received, stopping service...")
 
-	// Graceful shutdown
 	appMonitor.Stop()
 	tunnelManager.Stop()
 

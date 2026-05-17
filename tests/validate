@@ -8,6 +8,55 @@ YELLOW="\033[33m"
 NC="\033[0m"
 
 FAIL=0
+CLEAN=0
+PROGRESS=0
+
+TOTAL_BUILDS=5
+CURRENT=0
+
+# stats storage
+declare -a BUILD_NAME
+declare -a BUILD_TIME
+declare -a BUILD_SIZE
+
+START_TOTAL=$(date +%s)
+
+show_help() {
+  echo "Go Cross-Compile Source Checker"
+  echo ""
+  echo "Usage:"
+  echo "  ./validate [options]"
+  echo ""
+  echo "Options:"
+  echo "  --clean      Clean build (no cache)"
+  echo "  --progress   Show progress bar"
+  echo "  -h, --help   Show help"
+  exit 0
+}
+
+for arg in "$@"; do
+  case $arg in
+    --clean) CLEAN=1 ;;
+    --progress) PROGRESS=1 ;;
+    -h|--help) show_help ;;
+  esac
+done
+
+render_progress() {
+  local current=$1
+  local total=$2
+
+  local width=30
+  local percent=$((current * 100 / total))
+  local filled=$((current * width / total))
+
+  local bar=""
+  for ((i=0; i<width; i++)); do
+    if (( i < filled )); then bar+="█"; else bar+="░"; fi
+  done
+
+  printf "\r[%s] %d/%d (%d%%)" "$bar" "$current" "$total" "$percent"
+}
 
 run_build() {
   local name=$1
@@ -15,12 +64,33 @@ run_build() {
   local arch=$3
   local path=$4
 
+  CURRENT=$((CURRENT + 1))
+
   echo -e "\n=============================="
   echo "Testing: $name ($os/$arch)"
   echo "=============================="
 
-  env GOOS="$os" GOARCH="$arch" CGO_ENABLED=0 \
-    go build -o /tmp/test_build_bin "$path"
+  if [[ $PROGRESS -eq 1 ]]; then
+    render_progress "$CURRENT" "$TOTAL_BUILDS"
+    echo ""
+  fi
+
+  local start=$(date +%s%3N)
+
+  local env_cmd=(env GOOS="$os" GOARCH="$arch" CGO_ENABLED=0)
+
+  if [[ $CLEAN -eq 1 ]]; then
+    echo -e "${YELLOW}Clean build mode enabled${NC}"
+    export GOCACHE="$(mktemp -d)"
+    export GOMODCACHE="$(mktemp -d)"
+  fi
+
+  OUT="/tmp/test_build_bin_${os}_${arch}"
+
+  "${env_cmd[@]}" go build -o "$OUT" "$path"
+
+  local end=$(date +%s%3N)
+  local duration=$((end - start))
 
   if [[ $? -eq 0 ]]; then
     echo -e "${GREEN}[OK]${NC} Build successful"
@@ -29,25 +99,56 @@ run_build() {
     FAIL=$((FAIL+1))
   fi
 
-  rm -f /tmp/test_build_bin
+  local size=0
+  if [[ -f "$OUT" ]]; then
+    size=$(stat -c%s "$OUT" 2>/dev/null || stat -f%z "$OUT")
+  fi
+
+  BUILD_NAME+=("$name")
+  BUILD_TIME+=("$duration")
+  BUILD_SIZE+=("$size")
+
+  rm -f "$OUT"
+
+  if [[ $PROGRESS -eq 1 ]]; then
+    render_progress "$CURRENT" "$TOTAL_BUILDS"
+    echo ""
+  fi
 }
 
 echo "====================================="
 echo "   Go Cross-Compile Source Checker"
 echo "====================================="
 
-# Linux
+if [[ $CLEAN -eq 1 ]]; then
+  echo -e "${YELLOW}Running in CLEAN mode${NC}"
+fi
+
+# builds
 run_build "Linux AMD64" linux amd64 src/linux/main.go
 run_build "Linux ARM64" linux arm64 src/linux/main.go
-
-# macOS
 run_build "macOS AMD64" darwin amd64 src/macos/main.go
 run_build "macOS ARM64" darwin arm64 src/macos/main.go
-
-# Windows
 run_build "Windows AMD64" windows amd64 src/windows/main.go
 
-echo -e "\n====================================="
+echo ""
+echo "====================================="
+echo "           BUILD STATS"
+echo "====================================="
+
+printf "%-20s %-12s %-10s\n" "TARGET" "TIME(ms)" "SIZE(KB)"
+echo "-------------------------------------"
+
+for i in "${!BUILD_NAME[@]}"; do
+  size_kb=$((BUILD_SIZE[i] / 1024))
+  printf "%-20s %-10s %-10s\n" "${BUILD_NAME[i]}" "${BUILD_TIME[i]}" "${size_kb}"
+done
+
+END_TOTAL=$(date +%s)
+TOTAL_TIME=$((END_TOTAL - START_TOTAL))
+
+echo "-------------------------------------"
+echo -e "Total time: ${YELLOW}${TOTAL_TIME}s${NC}"
 
 if [[ $FAIL -eq 0 ]]; then
   echo -e "${GREEN}ALL BUILDS OK${NC}"
