@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
@@ -14,16 +13,12 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/xanderwp/proxybridgeservice/src/shared"
 )
 
 // Configuration
 const (
-	SERVICE_NAME       = "com.rocketman.tunnel"
-	HTTP_PORT          = 5020
-	APP_PING_URL       = "http://localhost:8081/ping"
-	APP_CHECK_INTERVAL = 2 * time.Second
-	
-	// Quarantine removal settings
 	APP_PATH                    = "/Applications/RocketMan Proxy Bridge.app"
 	QUARANTINE_CHECK_INTERVAL   = 5 * time.Second
 	QUARANTINE_REMOVAL_ENABLED  = true
@@ -86,7 +81,7 @@ func (tm *TunnelManager) Start(username, appname string) map[string]interface{} 
 	// Start sing-box process
 	cmd := exec.Command(tm.singboxPath, "run", "-c", tm.configPath)
 	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Setpgid: true, // Create new process group
+		Setsid: true, // Create new process group
 	}
 
 	// Start the process
@@ -203,103 +198,21 @@ func (tm *TunnelManager) GetStatus() map[string]interface{} {
 	}
 }
 
-// AppMonitor monitors the main application
-type AppMonitor struct {
-	tunnelManager      *TunnelManager
-	pingURL            string
-	checkInterval      time.Duration
-	maxFailures        int
-	consecutiveFailures int
-	stopChan           chan struct{}
-	wg                 sync.WaitGroup
+// PlatformHTTPHandler wraps TunnelManager to implement shared.ITunnelOperations
+type PlatformHTTPHandler struct {
+	tunnelManager *TunnelManager
 }
 
-// NewAppMonitor creates a new app monitor
-func NewAppMonitor(tm *TunnelManager, pingURL string, checkInterval time.Duration) *AppMonitor {
-	return &AppMonitor{
-		tunnelManager:      tm,
-		pingURL:            pingURL,
-		checkInterval:      checkInterval,
-		maxFailures:        3,
-		consecutiveFailures: 0,
-		stopChan:           make(chan struct{}),
-	}
+func (h *PlatformHTTPHandler) Start(username, appname string) map[string]interface{} {
+	return h.tunnelManager.Start(username, appname)
 }
 
-// Start starts monitoring
-func (am *AppMonitor) Start() {
-	am.wg.Add(1)
-	go am.monitorLoop()
-	log.Println("App monitor started")
+func (h *PlatformHTTPHandler) Stop() map[string]interface{} {
+	return h.tunnelManager.Stop()
 }
 
-// Stop stops monitoring
-func (am *AppMonitor) Stop() {
-	close(am.stopChan)
-	am.wg.Wait()
-	log.Println("App monitor stopped")
-}
-
-// checkAppAlive checks if main app is responding
-func (am *AppMonitor) checkAppAlive() bool {
-	client := &http.Client{
-		Timeout: 2 * time.Second,
-	}
-
-	resp, err := client.Get(am.pingURL)
-	if err != nil {
-		return false
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return false
-	}
-
-	// Check response body for "pong"
-	var buf [256]byte
-	n, _ := resp.Body.Read(buf[:])
-	body := string(buf[:n])
-
-	return body == "pong" || contains(body, "pong")
-}
-
-// monitorLoop is the main monitoring loop
-func (am *AppMonitor) monitorLoop() {
-	defer am.wg.Done()
-
-	ticker := time.NewTicker(am.checkInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-am.stopChan:
-			return
-		case <-ticker.C:
-			if am.tunnelManager.IsRunning() {
-				appAlive := am.checkAppAlive()
-
-				if appAlive {
-					if am.consecutiveFailures > 0 {
-						log.Println("Main app reconnected")
-					}
-					am.consecutiveFailures = 0
-				} else {
-					am.consecutiveFailures++
-
-					if am.consecutiveFailures >= am.maxFailures {
-						log.Printf("Main app not responding (%d checks), stopping tunnel",
-							am.consecutiveFailures)
-
-						result := am.tunnelManager.Stop()
-						log.Printf("Tunnel stopped due to app disconnection: %v", result)
-
-						am.consecutiveFailures = 0
-					}
-				}
-			}
-		}
-	}
+func (h *PlatformHTTPHandler) GetStatus() map[string]interface{} {
+	return h.tunnelManager.GetStatus()
 }
 
 // QuarantineMonitor automatically checks and removes quarantine from app
@@ -404,71 +317,13 @@ func (qm *QuarantineMonitor) monitorLoop() {
 	}
 }
 
-// HTTPHandler handles HTTP control requests
-type HTTPHandler struct {
-	tunnelManager *TunnelManager
-}
-
-// ServeHTTP handles incoming HTTP requests
-func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-
-	switch r.URL.Path {
-	case "/start":
-		username := r.URL.Query().Get("username")
-		appname := r.URL.Query().Get("appname")
-
-		if username == "" || appname == "" {
-			respondJSON(w, http.StatusBadRequest, map[string]interface{}{
-				"error": "Missing required parameters: username, appname",
-			})
-			return
-		}
-
-		result := h.tunnelManager.Start(username, appname)
-		respondJSON(w, http.StatusOK, result)
-
-	case "/stop":
-		result := h.tunnelManager.Stop()
-		respondJSON(w, http.StatusOK, result)
-
-	case "/status":
-		result := h.tunnelManager.GetStatus()
-		respondJSON(w, http.StatusOK, result)
-
-	case "/ping":
-		respondJSON(w, http.StatusOK, map[string]interface{}{
-			"status": "ok",
-		})
-
-	default:
-		respondJSON(w, http.StatusNotFound, map[string]interface{}{
-			"error": "Not found",
-		})
-	}
-}
-
-// respondJSON sends a JSON response
-func respondJSON(w http.ResponseWriter, code int, data interface{}) {
-	w.WriteHeader(code)
-	json.NewEncoder(w).Encode(data)
-}
-
-// contains checks if string contains substring (case-insensitive)
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && 
-		(s == substr || len(s) > len(substr) && 
-		(s[:len(substr)] == substr || s[len(s)-len(substr):] == substr || 
-		len(s) > len(substr)*2))
-}
-
 func main() {
 	// Parse flags
 	versionFlag := flag.Bool("version", false, "Print version and exit")
 	flag.Parse()
 
 	if *versionFlag {
-		fmt.Println("RocketMan Tunnel Service v1.0.0")
+		fmt.Printf("RocketMan Tunnel Service v%s\n", shared.VERSION)
 		os.Exit(0)
 	}
 
@@ -478,24 +333,24 @@ func main() {
 	// Create tunnel manager
 	tunnelManager := NewTunnelManager()
 
-	// Create app monitor
-	appMonitor := NewAppMonitor(tunnelManager, APP_PING_URL, APP_CHECK_INTERVAL)
+	// Create app monitor using shared
+	appMonitor := shared.NewAppMonitor(tunnelManager, shared.APP_PING_URL, shared.APP_CHECK_INTERVAL)
 	appMonitor.Start()
 
 	// Create quarantine monitor
 	quarantineMonitor := NewQuarantineMonitor(APP_PATH, QUARANTINE_CHECK_INTERVAL, QUARANTINE_REMOVAL_ENABLED)
 	quarantineMonitor.Start()
 
-	// Create HTTP server
-	handler := &HTTPHandler{tunnelManager: tunnelManager}
+	// Create HTTP server using shared handler
+	handler := shared.NewHTTPHandler(&PlatformHTTPHandler{tunnelManager: tunnelManager})
 	server := &http.Server{
-		Addr:    fmt.Sprintf("127.0.0.1:%d", HTTP_PORT),
+		Addr:    fmt.Sprintf("127.0.0.1:%d", shared.HTTP_PORT),
 		Handler: handler,
 	}
 
 	// Start server in goroutine
 	go func() {
-		log.Printf("HTTP server listening on port %d", HTTP_PORT)
+		log.Printf("HTTP server listening on port %d", shared.HTTP_PORT)
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("HTTP server error: %v", err)
 		}

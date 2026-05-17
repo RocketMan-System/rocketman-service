@@ -25,6 +25,8 @@ import (
 	"golang.org/x/sys/windows/svc"
 	"golang.org/x/sys/windows/svc/eventlog"
 	"golang.org/x/sys/windows/svc/mgr"
+
+	"github.com/xanderwp/proxybridgeservice/src/shared"
 )
 
 // Configuration
@@ -32,9 +34,6 @@ const (
 	SERVICE_NAME         = "RocketMan_Tun_Service"
 	SERVICE_DISPLAY_NAME = "RocketMan Tunnel Service"
 	SERVICE_DESCRIPTION  = "Manages RocketMan tunnel via HTTP API"
-	HTTP_PORT            = 5020
-	APP_PING_URL         = "http://localhost:8081/ping"
-	APP_CHECK_INTERVAL   = 2 * time.Second
 )
 
 var elog *eventlog.Log
@@ -444,99 +443,21 @@ func (tm *TunnelManager) GetStatus() map[string]interface{} {
 	return map[string]interface{}{"status": "stopped"}
 }
 
-// AppMonitor monitors the main application
-type AppMonitor struct {
-	tunnelManager       *TunnelManager
-	pingURL             string
-	checkInterval       time.Duration
-	maxFailures         int
-	consecutiveFailures int
-	stopChan            chan struct{}
-	wg                  sync.WaitGroup
+// PlatformHTTPHandler wraps TunnelManager to implement shared.ITunnelOperations
+type PlatformHTTPHandler struct {
+	tunnelManager *TunnelManager
 }
 
-// NewAppMonitor creates a new app monitor
-func NewAppMonitor(tm *TunnelManager, pingURL string, checkInterval time.Duration) *AppMonitor {
-	return &AppMonitor{
-		tunnelManager: tm,
-		pingURL:       pingURL,
-		checkInterval: checkInterval,
-		maxFailures:   3,
-		stopChan:      make(chan struct{}),
-	}
+func (h *PlatformHTTPHandler) Start(username, appname string) map[string]interface{} {
+	return h.tunnelManager.Start(username, appname)
 }
 
-// Start starts monitoring
-func (am *AppMonitor) Start() {
-	am.wg.Add(1)
-	go am.monitorLoop()
-	logInfo("App monitor started")
+func (h *PlatformHTTPHandler) Stop() map[string]interface{} {
+	return h.tunnelManager.Stop()
 }
 
-// Stop stops monitoring
-func (am *AppMonitor) Stop() {
-	close(am.stopChan)
-	am.wg.Wait()
-	logInfo("App monitor stopped")
-}
-
-// checkAppAlive checks if main app is responding
-func (am *AppMonitor) checkAppAlive() bool {
-	client := &http.Client{Timeout: 2 * time.Second}
-
-	resp, err := client.Get(am.pingURL)
-	if err != nil {
-		return false
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return false
-	}
-
-	var buf [256]byte
-	n, _ := resp.Body.Read(buf[:])
-	body := strings.ToLower(string(buf[:n]))
-
-	return strings.Contains(body, "pong")
-}
-
-// monitorLoop is the main monitoring loop
-func (am *AppMonitor) monitorLoop() {
-	defer am.wg.Done()
-
-	ticker := time.NewTicker(am.checkInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-am.stopChan:
-			return
-		case <-ticker.C:
-			if am.tunnelManager.IsRunning() {
-				appAlive := am.checkAppAlive()
-
-				if appAlive {
-					if am.consecutiveFailures > 0 {
-						logInfo("Main app reconnected")
-					}
-					am.consecutiveFailures = 0
-				} else {
-					am.consecutiveFailures++
-
-					if am.consecutiveFailures >= am.maxFailures {
-						logError(fmt.Sprintf("Main app not responding (%d checks), stopping tunnel",
-							am.consecutiveFailures))
-
-						result := am.tunnelManager.Stop()
-						logInfo(fmt.Sprintf("Tunnel stopped due to app disconnection: %v", result))
-
-						am.consecutiveFailures = 0
-					}
-				}
-			}
-		}
-	}
+func (h *PlatformHTTPHandler) GetStatus() map[string]interface{} {
+	return h.tunnelManager.GetStatus()
 }
 
 // HTTPHandler handles HTTP control requests
@@ -685,7 +606,7 @@ func respondJSON(w http.ResponseWriter, code int, data interface{}) {
 // rmService implements svc.Handler
 type rmService struct {
 	tunnelManager *TunnelManager
-	appMonitor    *AppMonitor
+	appMonitor    *shared.AppMonitor
 	httpServer    *http.Server
 }
 
@@ -694,12 +615,12 @@ func (s *rmService) Execute(args []string, r <-chan svc.ChangeRequest, changes c
 
 	handler := &HTTPHandler{tunnelManager: s.tunnelManager}
 	s.httpServer = &http.Server{
-		Addr:    fmt.Sprintf("127.0.0.1:%d", HTTP_PORT),
+		Addr:    fmt.Sprintf("127.0.0.1:%d", shared.HTTP_PORT),
 		Handler: handler,
 	}
 
 	go func() {
-		logInfo(fmt.Sprintf("HTTP server listening on port %d", HTTP_PORT))
+		logInfo(fmt.Sprintf("HTTP server listening on port %d", shared.HTTP_PORT))
 		if err := s.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			logError(fmt.Sprintf("HTTP server error: %v", err))
 		}
@@ -708,7 +629,7 @@ func (s *rmService) Execute(args []string, r <-chan svc.ChangeRequest, changes c
 	s.appMonitor.Start()
 
 	changes <- svc.Status{State: svc.Running, Accepts: svc.AcceptStop | svc.AcceptShutdown}
-	logInfo(fmt.Sprintf("Service started successfully on port %d", HTTP_PORT))
+	logInfo(fmt.Sprintf("Service started successfully on port %d", shared.HTTP_PORT))
 
 loop:
 	for {
@@ -750,7 +671,7 @@ func runService(name string) {
 	logInfo("Windows service process starting")
 
 	tunnelManager := NewTunnelManager()
-	appMonitor := NewAppMonitor(tunnelManager, APP_PING_URL, APP_CHECK_INTERVAL)
+	appMonitor := shared.NewAppMonitor(tunnelManager, shared.APP_PING_URL, shared.APP_CHECK_INTERVAL)
 
 	s := &rmService{
 		tunnelManager: tunnelManager,
@@ -887,7 +808,7 @@ func main() {
 	logInfo("Logger initialized with 2-hour retention")
 
 	if *versionFlag {
-		fmt.Println("RocketMan Tunnel Service v1.0.0")
+		fmt.Printf("RocketMan Tunnel Service v%s\n", shared.VERSION)
 		os.Exit(0)
 	}
 
@@ -942,17 +863,17 @@ func main() {
 	log.Println("RocketMan Tunnel Service starting...")
 
 	tunnelManager := NewTunnelManager()
-	appMonitor := NewAppMonitor(tunnelManager, APP_PING_URL, APP_CHECK_INTERVAL)
+	appMonitor := shared.NewAppMonitor(tunnelManager, shared.APP_PING_URL, shared.APP_CHECK_INTERVAL)
 	appMonitor.Start()
 
 	handler := &HTTPHandler{tunnelManager: tunnelManager}
 	server := &http.Server{
-		Addr:    fmt.Sprintf("127.0.0.1:%d", HTTP_PORT),
+		Addr:    fmt.Sprintf("127.0.0.1:%d", shared.HTTP_PORT),
 		Handler: handler,
 	}
 
 	go func() {
-		log.Printf("HTTP server listening on port %d", HTTP_PORT)
+		log.Printf("HTTP server listening on port %d", shared.HTTP_PORT)
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("HTTP server error: %v", err)
 		}
