@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+
+set -e
+
+GREEN="\033[32m"
+RED="\033[31m"
+YELLOW="\033[33m"
+NC="\033[0m"
+
+FAIL=0
+
+run_build() {
+  local name=$1
+  local os=$2
+  local arch=$3
+  local path=$4
+
+  echo -e "\n=============================="
+  echo "Testing: $name ($os/$arch)"
+  echo "=============================="
+
+  env GOOS="$os" GOARCH="$arch" CGO_ENABLED=0 \
+    go build -o /tmp/test_build_bin "$path"
+
+  if [[ $? -eq 0 ]]; then
+    echo -e "${GREEN}[OK]${NC} Build successful"
+  else
+    echo -e "${RED}[FAIL]${NC} Build failed"
+    FAIL=$((FAIL+1))
+  fi
+
+  rm -f /tmp/test_build_bin
+}
+
+echo "====================================="
+echo "   Go Cross-Compile Source Checker"
+echo "====================================="
+
+# Linux
+run_build "Linux AMD64" linux amd64 src/linux/main.go
+run_build "Linux ARM64" linux arm64 src/linux/main.go
+
+# macOS
+run_build "macOS AMD64" darwin amd64 src/macos/main.go
+run_build "macOS ARM64" darwin arm64 src/macos/main.go
+
+# Windows
+run_build "Windows AMD64" windows amd64 src/windows/main.go
+
+echo -e "\n====================================="
+
+if [[ $FAIL -eq 0 ]]; then
+  echo -e "${GREEN}ALL BUILDS OK${NC}"
+  exit 0
+else
+  echo -e "${RED}$FAIL BUILD(S) FAILED${NC}"
+  exit 1
+fi
