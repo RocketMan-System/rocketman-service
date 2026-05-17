@@ -64,20 +64,26 @@ func logError(msg string) {
 
 // TunnelManager manages the sing-box process on Windows.
 type TunnelManager struct {
-	process     *os.Process
-	mu          sync.Mutex
-	singboxPath string
-	configPath  string
-	logPath     string
-	logFile     *os.File
-	logWriter   *shared.SingboxLogWriter
-	isRunning   bool
-	pgid        uint32
+	process            *os.Process
+	mu                 sync.Mutex
+	singboxPath        string
+	configPath         string
+	logPath            string
+	logFile            *os.File
+	logWriter          *shared.SingboxLogWriter
+	isRunning          bool
+	pgid               uint32
+	restartAttempts    int
+	lastStartTime      time.Time
+	stopMonitorChan    chan struct{}
+	monitorWg          sync.WaitGroup
 }
 
 // NewTunnelManager creates a new tunnel manager.
 func NewTunnelManager() *TunnelManager {
-	return &TunnelManager{}
+	return &TunnelManager{
+		stopMonitorChan: make(chan struct{}),
+	}
 }
 
 // Start starts the tunnel with given parameters.
@@ -172,6 +178,12 @@ func (tm *TunnelManager) Start(username, appname string) map[string]interface{} 
 	logInfo(fmt.Sprintf("Tunnel started: PID=%d, singbox=%s, config=%s",
 		tm.process.Pid, tm.singboxPath, tm.configPath))
 
+	// Reset restart attempts and start monitoring
+	tm.restartAttempts = 0
+	tm.lastStartTime = time.Now()
+	tm.monitorWg.Add(1)
+	go tm.monitor()
+
 	return map[string]interface{}{
 		"status":       "started",
 		"pid":          tm.process.Pid,
@@ -206,11 +218,11 @@ func (tm *TunnelManager) checkAliveNoLock() bool {
 // Stop stops the tunnel using Windows CTRL_BREAK_EVENT.
 func (tm *TunnelManager) Stop() map[string]interface{} {
 	tm.mu.Lock()
-	defer tm.mu.Unlock()
 
 	logInfo("Tunnel stop requested")
 
 	if !tm.isRunning {
+		tm.mu.Unlock()
 		logInfo("Tunnel is not running")
 		return map[string]interface{}{"status": "not_running"}
 	}
@@ -241,6 +253,14 @@ func (tm *TunnelManager) Stop() map[string]interface{} {
 	tm.logWriter = nil
 	tm.process = nil
 	tm.isRunning = false
+
+	// Stop monitor goroutine
+	close(tm.stopMonitorChan)
+	tm.stopMonitorChan = make(chan struct{})
+	tm.mu.Unlock()
+
+	tm.monitorWg.Wait()
+
 	logInfo("Tunnel stopped")
 
 	return map[string]interface{}{"status": "stopped"}
@@ -278,6 +298,118 @@ func (tm *TunnelManager) GetStatus() map[string]interface{} {
 	}
 
 	return map[string]interface{}{"status": "stopped"}
+}
+
+// monitor watches the tunnel process and handles restarts on crash.
+func (tm *TunnelManager) monitor() {
+	defer tm.monitorWg.Done()
+
+	for {
+		// Wait for process to exit or stop signal
+		select {
+		case <-tm.stopMonitorChan:
+			return
+		default:
+		}
+
+		tm.mu.Lock()
+		if !tm.isRunning || tm.process == nil {
+			tm.mu.Unlock()
+			return
+		}
+		process := tm.process
+		tm.mu.Unlock()
+
+		// Wait for process exit
+		_, err := process.Wait()
+
+		tm.mu.Lock()
+		if !tm.isRunning || tm.process != process {
+			tm.mu.Unlock()
+			return
+		}
+
+		// Process crashed
+		logError(fmt.Sprintf("Tunnel process crashed: %v", err))
+
+		// Check if 10 seconds have passed since start
+		uptime := time.Since(tm.lastStartTime)
+		if uptime >= 10*time.Second {
+			logInfo(fmt.Sprintf("Process uptime was %v (>= 10s), resetting restart attempts counter", uptime))
+			tm.restartAttempts = 0
+		}
+
+		// Check if we can retry
+		if tm.restartAttempts >= 5 {
+			logError(fmt.Sprintf("Maximum restart attempts (%d) reached, giving up", tm.restartAttempts))
+			tm.process = nil
+			tm.isRunning = false
+			if tm.logFile != nil {
+				_ = tm.logFile.Close()
+				tm.logFile = nil
+			}
+			tm.logWriter = nil
+			tm.mu.Unlock()
+			return
+		}
+
+		tm.restartAttempts++
+		logInfo(fmt.Sprintf("Attempting to restart tunnel (attempt %d/5)", tm.restartAttempts))
+		tm.process = nil
+		tm.isRunning = false
+		if tm.logFile != nil {
+			_ = tm.logFile.Close()
+			tm.logFile = nil
+		}
+		tm.logWriter = nil
+		tm.mu.Unlock()
+
+		// Wait 1 second before retry
+		select {
+		case <-time.After(1 * time.Second):
+		case <-tm.stopMonitorChan:
+			return
+		}
+
+		// Try to restart
+		tm.mu.Lock()
+		if !tm.isRunning {
+			tm.lastStartTime = time.Now()
+
+			logFile, err := os.OpenFile(tm.logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+			if err != nil {
+				logError(fmt.Sprintf("Failed to open log file for restart: %v", err))
+				tm.mu.Unlock()
+				continue
+			}
+			tm.logFile = logFile
+			tm.logWriter = &shared.SingboxLogWriter{Store: recentLogs}
+
+			cmd := exec.Command(tm.singboxPath, "run", "-c", tm.configPath)
+			cmd.Dir = filepath.Dir(tm.configPath)
+			cmd.Stdout = io.MultiWriter(logFile, tm.logWriter)
+			cmd.Stderr = io.MultiWriter(logFile, tm.logWriter)
+			cmd.SysProcAttr = &syscall.SysProcAttr{
+				CreationFlags: syscall.CREATE_NEW_PROCESS_GROUP | windows.CREATE_NO_WINDOW,
+				HideWindow:    true,
+			}
+
+			if err := cmd.Start(); err != nil {
+				logError(fmt.Sprintf("Failed to restart tunnel: %v", err))
+				_ = logFile.Close()
+				tm.logFile = nil
+				tm.logWriter = nil
+				tm.mu.Unlock()
+				continue
+			}
+
+			tm.process = cmd.Process
+			tm.pgid = uint32(tm.process.Pid)
+			tm.isRunning = true
+			logInfo(fmt.Sprintf("Tunnel restarted: PID=%d", tm.process.Pid))
+		}
+		tm.mu.Unlock()
+	}
 }
 
 // ---------------------------------------------------------------------------
