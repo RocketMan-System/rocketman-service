@@ -11,7 +11,7 @@ permissions:
 jobs:
   release:
     name: Build & Release (Ubuntu only)
-    runs-on: ubuntu-latest
+    runs-on: self-linux
 
     steps:
       - uses: actions/checkout@v4
