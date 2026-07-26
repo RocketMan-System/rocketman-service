@@ -8,7 +8,7 @@ const (
 	HTTP_PORT          = 5020
 	APP_PING_URL       = "http://localhost:8081/ping"
 	APP_CHECK_INTERVAL = 2 * time.Second
-	VERSION            = "1.0.0"
+	VERSION            = "1.1.0"
 
 	// Log store settings shared across all platforms.
 	LOG_RETENTION = 2 * time.Hour

@@ -73,7 +73,7 @@ func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		RespondJSON(w, http.StatusOK, map[string]interface{}{"status": "ok"})
 
 	default:
-		RespondJSON(w, http.StatusNotFound, map[string]interface{}{"error": "Not found"})
+		RespondJSON(w, http.StatusNotFound, map[string]interface{}{"error": "Endpoint not found"})
 	}
 }
 
