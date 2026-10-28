@@ -64,47 +64,56 @@ download_binary() {
     log_info "Architecture: $ARCH"
 
     log_info "Fetching latest release information..."
-    
-    # Get latest release URL
     RELEASE_URL="https://api.github.com/repos/${GITHUB_REPO}/releases/latest"
-    
-    # Determine binary name based on architecture
-    if [ "$ARCH" = "universal" ]; then
-        BINARY_PATTERN="${BINARY_NAME}-macos-universal"
-    else
-        BINARY_PATTERN="${BINARY_NAME}-darwin-${ARCH}"
-    fi
-    
-    # Download binary
-    DOWNLOAD_URL=$(curl -s "$RELEASE_URL" | grep "browser_download_url.*${BINARY_NAME}" | cut -d '"' -f 4 | head -n 1)
-    
+    RELEASE_JSON=$(curl -fsSL "$RELEASE_URL")
+    ASSET_URLS=$(echo "$RELEASE_JSON" | grep "browser_download_url" | cut -d '"' -f 4)
+
+    # Releases ship per-arch archives; a bare binary asset is supported for older releases.
+    DOWNLOAD_URL=$(echo "$ASSET_URLS" | grep -i "macos-${ARCH}\.tar\.gz$\|darwin-${ARCH}\.tar\.gz$" | head -n 1)
+    IS_ARCHIVE=1
+
     if [ -z "$DOWNLOAD_URL" ]; then
-        log_error "Could not find download URL for latest release"
-        log_info "Trying alternative pattern..."
-        DOWNLOAD_URL=$(curl -s "$RELEASE_URL" | grep "browser_download_url" | grep -i "macos\|darwin" | cut -d '"' -f 4 | head -n 1)
+        DOWNLOAD_URL=$(echo "$ASSET_URLS" | grep "/${BINARY_NAME}$" | head -n 1)
+        IS_ARCHIVE=0
     fi
-    
+
     if [ -z "$DOWNLOAD_URL" ]; then
-        log_error "Failed to get download URL from GitHub"
+        log_error "Failed to find a macOS ${ARCH} build in the latest release"
         exit 1
     fi
-    
+
     log_info "Downloading from: $DOWNLOAD_URL"
-    
-    TMP_FILE="/tmp/${BINARY_NAME}"
-    
-    if ! curl -L -o "$TMP_FILE" "$DOWNLOAD_URL"; then
+
+    TMP_DIR=$(mktemp -d "/tmp/${BINARY_NAME}.XXXXXX")
+    TMP_FILE="${TMP_DIR}/download"
+
+    if ! curl -fL -o "$TMP_FILE" "$DOWNLOAD_URL"; then
         log_error "Failed to download binary"
+        rm -rf "$TMP_DIR"
         exit 1
     fi
-    
-    # Make executable
-    chmod +x "$TMP_FILE"
-    
-    # Move to installation directory
+
+    if [ "$IS_ARCHIVE" = "1" ]; then
+        tar -xzf "$TMP_FILE" -C "$TMP_DIR"
+        EXTRACTED_BIN=$(find "$TMP_DIR" -type f -name "$BINARY_NAME" | head -n 1)
+        if [ -z "$EXTRACTED_BIN" ]; then
+            log_error "Binary '${BINARY_NAME}' not found inside archive"
+            rm -rf "$TMP_DIR"
+            exit 1
+        fi
+    else
+        EXTRACTED_BIN="$TMP_FILE"
+    fi
+
+    chmod +x "$EXTRACTED_BIN"
+    # Downloaded files carry quarantine; launchd would refuse to run the daemon.
+    xattr -d com.apple.quarantine "$EXTRACTED_BIN" 2>/dev/null || true
+
     log_info "Installing binary to ${INSTALL_DIR}/${BINARY_NAME}..."
-    mv "$TMP_FILE" "${INSTALL_DIR}/${BINARY_NAME}"
-    
+    mkdir -p "$INSTALL_DIR"
+    mv "$EXTRACTED_BIN" "${INSTALL_DIR}/${BINARY_NAME}"
+    rm -rf "$TMP_DIR"
+
     log_info "Binary installed successfully"
 }
 

@@ -12,8 +12,21 @@ const (
 	// RestartBackoff is used after MaxQuickRestarts instead of giving up forever.
 	RestartBackoff = 30 * time.Second
 
-	// ProcessStopTimeout is how long Stop waits for the monitor to reap the child.
-	ProcessStopTimeout = 5 * time.Second
+	// StartupProbe is how long Start waits to see whether the process dies right away.
+	StartupProbe = 500 * time.Millisecond
+
+	// ProcessKillWait is how long to wait for the process to be reaped after a forced kill.
+	ProcessKillWait = 2 * time.Second
+
+	// ChildWaitDelay bounds how long Wait keeps draining stdout/stderr after the process exited
+	// (e.g. when a grandchild inherited the pipes).
+	ChildWaitDelay = 2 * time.Second
+
+	// AppUnresponsiveTimeout is how long the main app may stay silent before the tunnel is stopped.
+	AppUnresponsiveTimeout = 15 * time.Second
+
+	// AppResumeGrace suppresses app-liveness verdicts right after a system sleep/resume.
+	AppResumeGrace = 30 * time.Second
 )
 
 // ComputeRestartDelay returns delay before the next restart and the updated attempt counter.

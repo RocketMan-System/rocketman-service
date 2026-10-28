@@ -51,8 +51,8 @@ jobs:
         run: |
           mkdir -p dist/linux-amd64 dist/linux-arm64
 
-          GOOS=linux GOARCH=amd64 go build -o dist/linux-amd64/rocketman-tunnel-service -ldflags "-s -w" src/linux/main.go
-          GOOS=linux GOARCH=arm64 go build -o dist/linux-arm64/rocketman-tunnel-service -ldflags "-s -w" src/linux/main.go
+          GOOS=linux GOARCH=amd64 go build -o dist/linux-amd64/rocketman-tunnel-service -ldflags "-s -w -X github.com/xanderwp/proxybridgeservice/src/shared.VERSION=${{ steps.version.outputs.version }}" src/linux/main.go
+          GOOS=linux GOARCH=arm64 go build -o dist/linux-arm64/rocketman-tunnel-service -ldflags "-s -w -X github.com/xanderwp/proxybridgeservice/src/shared.VERSION=${{ steps.version.outputs.version }}" src/linux/main.go
 
           cp src/linux/install.sh dist/linux-amd64/
           cp src/linux/uninstall.sh dist/linux-amd64/
@@ -74,8 +74,8 @@ jobs:
         run: |
           mkdir -p dist/macos-amd64 dist/macos-arm64
 
-          GOOS=darwin GOARCH=amd64 go build -o dist/macos-amd64/rocketman-tunnel-service -ldflags "-s -w" src/macos/main.go
-          GOOS=darwin GOARCH=arm64 go build -o dist/macos-arm64/rocketman-tunnel-service -ldflags "-s -w" src/macos/main.go
+          GOOS=darwin GOARCH=amd64 go build -o dist/macos-amd64/rocketman-tunnel-service -ldflags "-s -w -X github.com/xanderwp/proxybridgeservice/src/shared.VERSION=${{ steps.version.outputs.version }}" src/macos/main.go
+          GOOS=darwin GOARCH=arm64 go build -o dist/macos-arm64/rocketman-tunnel-service -ldflags "-s -w -X github.com/xanderwp/proxybridgeservice/src/shared.VERSION=${{ steps.version.outputs.version }}" src/macos/main.go
 
           cp src/macos/install.sh dist/macos-amd64/
           cp src/macos/uninstall.sh dist/macos-amd64/
@@ -97,11 +97,21 @@ jobs:
         run: |
           mkdir -p dist/windows
 
-          GOOS=windows GOARCH=amd64 go build -o dist/windows/win_service.exe -ldflags "-s -w" src/windows/main.go
+          GOOS=windows GOARCH=amd64 go build -o dist/windows/win_service.exe -ldflags "-s -w -X github.com/xanderwp/proxybridgeservice/src/shared.VERSION=${{ steps.version.outputs.version }}" src/windows/main.go
 
       # -------------------------
       # CREATE RELEASE
       # -------------------------
+      # ProxyBridge downloads these scripts directly from the latest release.
+      - name: Prepare install scripts
+        if: steps.check.outputs.exists == 'false'
+        run: |
+          mkdir -p dist/scripts
+          cp src/macos/install.sh dist/scripts/install.sh
+          cp src/macos/uninstall.sh dist/scripts/uninstall.sh
+          cp src/linux/install.sh dist/scripts/install-linux.sh
+          cp src/linux/uninstall.sh dist/scripts/uninstall-linux.sh
+
       - name: Create GitHub Release
         if: steps.check.outputs.exists == 'false'
         run: |
@@ -138,6 +148,10 @@ jobs:
                       rocketman-service-macos-amd64.tar.gz \
                       rocketman-service-macos-arm64.tar.gz \
                       dist/windows/win_service.exe \
+                      dist/scripts/install.sh \
+                      dist/scripts/uninstall.sh \
+                      dist/scripts/install-linux.sh \
+                      dist/scripts/uninstall-linux.sh \
                       checksums-linux.txt \
                       checksums-macos.txt
         env:

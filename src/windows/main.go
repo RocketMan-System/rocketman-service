@@ -62,425 +62,256 @@ func logError(msg string) {
 // TunnelManager — Windows-specific (Windows API for process lifecycle)
 // ---------------------------------------------------------------------------
 
+// GRACEFUL_STOP_TIMEOUT is short because a service has no console, so CTRL_BREAK
+// usually can't reach sing-box; waiting longer only pushes /stop past the app's 5s timeout.
+const GRACEFUL_STOP_TIMEOUT = 1500 * time.Millisecond
+
 // TunnelManager manages the sing-box process on Windows.
 type TunnelManager struct {
-	process         *os.Process
-	mu              sync.Mutex
-	singboxPath     string
-	configPath      string
-	logPath         string
-	logFile         *os.File
-	logWriter       *shared.SingboxLogWriter
-	isRunning       bool
-	pgid            uint32
-	restartAttempts int
-	lastStartTime   time.Time
-	stopMonitorChan chan struct{}
-	monitorWg       sync.WaitGroup
-	intentionalStop bool
-	wantRunning     bool
-	lastUsername    string
-	lastAppname     string
+	mu           sync.Mutex
+	singboxPath  string
+	configPath   string
+	logPath      string
+	profilePath  string
+	lastUsername string
+	lastAppname  string
+	pidFile      shared.PidFile
+	job          *shared.KillOnCloseJob
+	supervisor   *shared.Supervisor
 }
 
 // NewTunnelManager creates a new tunnel manager.
 func NewTunnelManager() *TunnelManager {
-	return &TunnelManager{
-		stopMonitorChan: make(chan struct{}),
+	programData := os.Getenv("ProgramData")
+	if programData == "" {
+		programData = `C:\ProgramData`
 	}
+
+	tm := &TunnelManager{
+		pidFile: shared.PidFile{Path: filepath.Join(programData, "RocketMan", "tun-singbox.pid")},
+	}
+
+	job, err := shared.NewKillOnCloseJob()
+	if err != nil {
+		logError(fmt.Sprintf("Failed to create job object, sing-box may outlive a crashed service: %v", err))
+	}
+	tm.job = job
+
+	tm.supervisor = shared.NewSupervisor(shared.SupervisorHooks{
+		Launch:          tm.launch,
+		Interrupt:       sendCtrlBreak,
+		Kill:            func(p *os.Process) { _ = p.Kill() },
+		OnStarted:       tm.onStarted,
+		OnExited:        tm.pidFile.Remove,
+		GracefulTimeout: GRACEFUL_STOP_TIMEOUT,
+		Log: func(isError bool, msg string) {
+			if isError {
+				logError(msg)
+			} else {
+				logInfo(msg)
+			}
+		},
+	})
+	return tm
+}
+
+// sendCtrlBreak asks the process group to exit gracefully.
+func sendCtrlBreak(p *os.Process) {
+	dll := syscall.NewLazyDLL("kernel32.dll")
+	genCtrl := dll.NewProc("GenerateConsoleCtrlEvent")
+	genCtrl.Call(uintptr(1), uintptr(p.Pid)) // 1 = CTRL_BREAK_EVENT, group id = pid (CREATE_NEW_PROCESS_GROUP)
+}
+
+// resolveProfilePath returns the user's profile directory that contains the app's sing-box.
+// The profile folder name may differ from the username, so the registered profile is tried first.
+func resolveProfilePath(username, appname string) string {
+	var candidates []string
+
+	if u, err := user.Lookup(username); err == nil && u.HomeDir != "" {
+		candidates = append(candidates, u.HomeDir)
+	}
+	candidates = append(candidates, filepath.Join("C:\\Users", username))
+
+	for _, profile := range candidates {
+		exe := filepath.Join(profile, "AppData", "Roaming", appname, ".sing-box", "sing-box.exe")
+		if _, err := os.Stat(exe); err == nil {
+			return profile
+		}
+	}
+
+	return filepath.Join("C:\\Users", username)
 }
 
 // Start starts the tunnel with given parameters.
 func (tm *TunnelManager) Start(username, appname string) map[string]interface{} {
-	tm.mu.Lock()
-	defer tm.mu.Unlock()
-
 	logInfo(fmt.Sprintf("Tunnel start requested: username=%s appname=%s", username, appname))
 
-	tm.lastUsername = username
-	tm.lastAppname = appname
-	tm.intentionalStop = false
-	tm.wantRunning = true
-
-	if tm.isRunning {
+	if pid, ok := tm.supervisor.RunningPID(); ok {
 		logInfo("Tunnel is already running")
 		return map[string]interface{}{
 			"status": "already_running",
-			"pid":    tm.process.Pid,
+			"pid":    pid,
 		}
 	}
 
-	basePath := filepath.Join("C:\\Users", username, "AppData", "Roaming", appname, ".sing-box")
-	tm.singboxPath = filepath.Join(basePath, "sing-box.exe")
-	tm.configPath = filepath.Join(basePath, "sing-box-auto.json")
-	tm.logPath = filepath.Join(basePath, "sing-box-service.log")
+	profilePath := resolveProfilePath(username, appname)
+	basePath := filepath.Join(profilePath, "AppData", "Roaming", appname, ".sing-box")
+	singboxPath := filepath.Join(basePath, "sing-box.exe")
+	configPath := filepath.Join(basePath, "sing-box-auto.json")
+	logPath := filepath.Join(basePath, "sing-box-service.log")
 
-	if _, err := os.Stat(tm.singboxPath); os.IsNotExist(err) {
-		logError(fmt.Sprintf("sing-box not found: %s", tm.singboxPath))
+	if _, err := os.Stat(singboxPath); os.IsNotExist(err) {
+		logError(fmt.Sprintf("sing-box not found: %s", singboxPath))
 		return map[string]interface{}{
 			"status":  "error",
-			"message": fmt.Sprintf("sing-box not found: %s", tm.singboxPath),
+			"message": fmt.Sprintf("sing-box not found: %s", singboxPath),
 		}
 	}
 
-	if _, err := os.Stat(tm.configPath); os.IsNotExist(err) {
-		logError(fmt.Sprintf("Config not found: %s", tm.configPath))
+	if _, err := os.Stat(configPath); os.IsNotExist(err) {
+		logError(fmt.Sprintf("Config not found: %s", configPath))
 		return map[string]interface{}{
 			"status":  "error",
-			"message": fmt.Sprintf("Config not found: %s", tm.configPath),
+			"message": fmt.Sprintf("Config not found: %s", configPath),
 		}
 	}
 
-	cmd := exec.Command(tm.singboxPath, "run", "-c", tm.configPath)
-	cmd.Dir = basePath
-	cmd.Env = buildChildEnv(username)
+	tm.mu.Lock()
+	tm.singboxPath = singboxPath
+	tm.configPath = configPath
+	tm.logPath = logPath
+	tm.profilePath = profilePath
+	tm.lastUsername = username
+	tm.lastAppname = appname
+	tm.mu.Unlock()
 
-	logFile, err := os.OpenFile(tm.logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	pid, already, err := tm.supervisor.Start()
 	if err != nil {
-		logError(fmt.Sprintf("Failed to open log file: %v", err))
+		logError(fmt.Sprintf("Tunnel start failed: %v", err))
 		return map[string]interface{}{
 			"status":  "error",
-			"message": fmt.Sprintf("Failed to open log file: %v", err),
+			"message": err.Error(),
 		}
 	}
-	tm.logFile = logFile
-	tm.logWriter = &shared.SingboxLogWriter{Store: recentLogs}
 
-	cmd.Stdout = io.MultiWriter(logFile, tm.logWriter)
-	cmd.Stderr = io.MultiWriter(logFile, tm.logWriter)
+	if already {
+		logInfo("Tunnel is already running")
+		return map[string]interface{}{
+			"status": "already_running",
+			"pid":    pid,
+		}
+	}
+
+	logInfo(fmt.Sprintf("Tunnel started: PID=%d, singbox=%s, config=%s", pid, singboxPath, configPath))
+
+	return map[string]interface{}{
+		"status":       "started",
+		"pid":          pid,
+		"singbox_path": singboxPath,
+		"config_path":  configPath,
+		"log_path":     logPath,
+	}
+}
+
+// launch builds the sing-box command for the current paths. The log file is closed once the process is reaped.
+func (tm *TunnelManager) launch() (*exec.Cmd, func(), error) {
+	tm.mu.Lock()
+	singboxPath := tm.singboxPath
+	configPath := tm.configPath
+	logPath := tm.logPath
+	profilePath := tm.profilePath
+	tm.mu.Unlock()
+
+	if killed, err := tm.pidFile.KillStale(singboxPath); err != nil {
+		logError(err.Error())
+	} else if killed {
+		logInfo("Killed sing-box left over from a previous service instance")
+	}
+
+	logFile, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to open log file: %v", err)
+	}
+	logWriter := &shared.SingboxLogWriter{Store: recentLogs}
+
+	cmd := exec.Command(singboxPath, "run", "-c", configPath)
+	cmd.Dir = filepath.Dir(configPath)
+	cmd.Env = buildChildEnv(profilePath)
+	cmd.Stdout = io.MultiWriter(logFile, logWriter)
+	cmd.Stderr = io.MultiWriter(logFile, logWriter)
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		CreationFlags: syscall.CREATE_NEW_PROCESS_GROUP | windows.CREATE_NO_WINDOW,
 		HideWindow:    true,
 	}
 
-	if err := cmd.Start(); err != nil {
-		_ = logFile.Close()
-		tm.logFile = nil
-		tm.logWriter = nil
-		logError(fmt.Sprintf("Failed to start process: %v", err))
-		return map[string]interface{}{
-			"status":  "error",
-			"message": fmt.Sprintf("Failed to start process: %v", err),
-		}
+	return cmd, func() { _ = logFile.Close() }, nil
+}
+
+// onStarted runs after every (re)start of sing-box.
+func (tm *TunnelManager) onStarted(p *os.Process) {
+	if err := tm.job.Assign(p.Pid); err != nil {
+		logError(fmt.Sprintf("Failed to assign sing-box to job object: %v", err))
 	}
-
-	tm.process = cmd.Process
-	tm.pgid = uint32(tm.process.Pid)
-	tm.isRunning = true
-
-	time.Sleep(500 * time.Millisecond)
-
-	if !tm.checkAliveNoLock() {
-		tm.isRunning = false
-		if tm.logFile != nil {
-			_ = tm.logFile.Close()
-			tm.logFile = nil
-		}
-		tm.logWriter = nil
-		logError("Process exited immediately")
-		return map[string]interface{}{
-			"status":  "error",
-			"message": "Process exited immediately",
-		}
-	}
-
-	logInfo(fmt.Sprintf("Tunnel started: PID=%d, singbox=%s, config=%s",
-		tm.process.Pid, tm.singboxPath, tm.configPath))
-
-	// Reset restart attempts and start monitoring
-	tm.restartAttempts = 0
-	tm.lastStartTime = time.Now()
-	tm.monitorWg.Add(1)
-	go tm.monitor()
-
-	return map[string]interface{}{
-		"status":       "started",
-		"pid":          tm.process.Pid,
-		"singbox_path": tm.singboxPath,
-		"config_path":  tm.configPath,
-		"log_path":     tm.logPath,
+	if err := tm.pidFile.Write(p.Pid); err != nil {
+		logError(fmt.Sprintf("Failed to write pid file: %v", err))
 	}
 }
 
-// checkAliveNoLock checks process liveness without acquiring the mutex.
-// Uses Windows API (GetExitCodeProcess) instead of signals.
-func (tm *TunnelManager) checkAliveNoLock() bool {
-	if tm.process == nil {
-		return false
-	}
-
-	handle, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, uint32(tm.process.Pid))
-	if err != nil {
-		return false
-	}
-	defer windows.CloseHandle(handle)
-
-	var exitCode uint32
-	if err := windows.GetExitCodeProcess(handle, &exitCode); err != nil {
-		return false
-	}
-
-	const STILL_ACTIVE = 259
-	return exitCode == STILL_ACTIVE
-}
-
-// Stop stops the tunnel. Monitor goroutine is the only Wait() owner (avoids double-Wait races).
+// Stop stops the tunnel.
 func (tm *TunnelManager) Stop() map[string]interface{} {
-	return tm.stopInternal(true)
-}
-
-func (tm *TunnelManager) signalMonitorStopLocked() {
-	select {
-	case <-tm.stopMonitorChan:
-		// already closed
-	default:
-		close(tm.stopMonitorChan)
-	}
-}
-
-func (tm *TunnelManager) resetMonitorChanLocked() {
-	select {
-	case <-tm.stopMonitorChan:
-		// drained closed channel
-	default:
-		close(tm.stopMonitorChan)
-	}
-	tm.stopMonitorChan = make(chan struct{})
-}
-
-func (tm *TunnelManager) stopInternal(clearWant bool) map[string]interface{} {
-	tm.mu.Lock()
-
 	logInfo("Tunnel stop requested")
 
-	if clearWant {
-		tm.wantRunning = false
-	}
-	tm.intentionalStop = true
-
-	proc := tm.process
-	pgid := tm.pgid
-	wasRunning := tm.isRunning || proc != nil
-	tm.signalMonitorStopLocked()
-	tm.mu.Unlock()
-
-	if proc != nil {
-		dll := syscall.NewLazyDLL("kernel32.dll")
-		genCtrl := dll.NewProc("GenerateConsoleCtrlEvent")
-		genCtrl.Call(uintptr(1), uintptr(pgid)) // 1 = CTRL_BREAK_EVENT
-	}
-
-	done := make(chan struct{})
-	go func() {
-		tm.monitorWg.Wait()
-		close(done)
-	}()
-
-	select {
-	case <-done:
-	case <-time.After(shared.ProcessStopTimeout):
-		logError("Process didn't exit gracefully, killing")
-		if proc != nil {
-			_ = proc.Kill()
-		}
-		select {
-		case <-done:
-		case <-time.After(2 * time.Second):
-			logError("Monitor did not finish after kill")
-		}
-	}
-
-	tm.mu.Lock()
-	if tm.logFile != nil {
-		_ = tm.logFile.Close()
-		tm.logFile = nil
-	}
-	tm.logWriter = nil
-	tm.process = nil
-	tm.isRunning = false
-	tm.intentionalStop = false
-	tm.resetMonitorChanLocked()
-	tm.mu.Unlock()
-
-	if !wasRunning {
+	if !tm.supervisor.Stop() {
 		logInfo("Tunnel is not running")
 		return map[string]interface{}{"status": "not_running"}
 	}
 
 	logInfo("Tunnel stopped")
-
 	return map[string]interface{}{"status": "stopped"}
 }
 
 // RecoverAfterResume restarts the tunnel after sleep/hibernate if it was supposed to run.
 func (tm *TunnelManager) RecoverAfterResume() {
+	if !tm.supervisor.IsActive() {
+		return
+	}
+
 	tm.mu.Lock()
-	want := tm.wantRunning
 	username := tm.lastUsername
 	appname := tm.lastAppname
 	tm.mu.Unlock()
 
-	if !want || username == "" || appname == "" {
+	if username == "" || appname == "" {
 		return
 	}
 
 	logInfo("System resume detected — recovering tunnel")
-	tm.stopInternal(false)
+	tm.supervisor.Stop()
 	tm.Start(username, appname)
 }
 
-// IsRunning checks if tunnel is running.
-func (tm *TunnelManager) IsRunning() bool {
-	tm.mu.Lock()
-	defer tm.mu.Unlock()
-
-	if !tm.isRunning {
-		return false
-	}
-
-	alive := tm.checkAliveNoLock()
-	if !alive {
-		tm.isRunning = false
-	}
-	return alive
+// IsActive reports whether the tunnel is running or about to be restarted.
+func (tm *TunnelManager) IsActive() bool {
+	return tm.supervisor.IsActive()
 }
 
 // GetStatus returns tunnel status.
 func (tm *TunnelManager) GetStatus() map[string]interface{} {
-	if tm.IsRunning() {
-		tm.mu.Lock()
-		defer tm.mu.Unlock()
-
-		return map[string]interface{}{
-			"status":       "running",
-			"pid":          tm.process.Pid,
-			"singbox_path": tm.singboxPath,
-			"config_path":  tm.configPath,
-			"log_path":     tm.logPath,
-		}
+	pid, ok := tm.supervisor.RunningPID()
+	if !ok {
+		return map[string]interface{}{"status": "stopped"}
 	}
 
-	return map[string]interface{}{"status": "stopped"}
-}
+	tm.mu.Lock()
+	defer tm.mu.Unlock()
 
-// monitor watches the tunnel process and handles restarts on crash.
-// It is the sole owner of process.Wait() to avoid double-Wait races with Stop().
-func (tm *TunnelManager) monitor() {
-	defer tm.monitorWg.Done()
-
-	for {
-		select {
-		case <-tm.stopMonitorChan:
-			return
-		default:
-		}
-
-		tm.mu.Lock()
-		if !tm.isRunning || tm.process == nil {
-			tm.mu.Unlock()
-			return
-		}
-		process := tm.process
-		tm.mu.Unlock()
-
-		_, err := process.Wait()
-
-		tm.mu.Lock()
-		intentional := tm.intentionalStop
-		sameProcess := tm.process == process
-
-		if intentional || !sameProcess {
-			if sameProcess {
-				if tm.logFile != nil {
-					_ = tm.logFile.Close()
-					tm.logFile = nil
-				}
-				tm.logWriter = nil
-				tm.process = nil
-				tm.isRunning = false
-			}
-			tm.mu.Unlock()
-			return
-		}
-
-		logError(fmt.Sprintf("Tunnel process crashed: %v", err))
-
-		delay, nextAttempts := shared.ComputeRestartDelay(tm.restartAttempts, tm.lastStartTime)
-		tm.restartAttempts = nextAttempts
-
-		if delay >= shared.RestartBackoff {
-			logError(fmt.Sprintf("Quick restart budget exhausted, backing off for %v", delay))
-		} else {
-			logInfo(fmt.Sprintf("Attempting to restart tunnel (attempt %d/%d) in %v",
-				tm.restartAttempts, shared.MaxQuickRestarts, delay))
-		}
-
-		if tm.logFile != nil {
-			_ = tm.logFile.Close()
-			tm.logFile = nil
-		}
-		tm.logWriter = nil
-		tm.process = nil
-		tm.isRunning = false
-		username := tm.lastUsername
-		appname := tm.lastAppname
-		want := tm.wantRunning
-		singboxPath := tm.singboxPath
-		configPath := tm.configPath
-		logPath := tm.logPath
-		tm.mu.Unlock()
-
-		if !want {
-			return
-		}
-
-		select {
-		case <-time.After(delay):
-		case <-tm.stopMonitorChan:
-			return
-		}
-
-		tm.mu.Lock()
-		if tm.intentionalStop || tm.isRunning || !tm.wantRunning {
-			tm.mu.Unlock()
-			return
-		}
-
-		tm.lastStartTime = time.Now()
-
-		logFile, openErr := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-		if openErr != nil {
-			logError(fmt.Sprintf("Failed to open log file for restart: %v", openErr))
-			tm.mu.Unlock()
-			continue
-		}
-		tm.logFile = logFile
-		tm.logWriter = &shared.SingboxLogWriter{Store: recentLogs}
-
-		cmd := exec.Command(singboxPath, "run", "-c", configPath)
-		cmd.Dir = filepath.Dir(configPath)
-		cmd.Env = buildChildEnv(username)
-		cmd.Stdout = io.MultiWriter(logFile, tm.logWriter)
-		cmd.Stderr = io.MultiWriter(logFile, tm.logWriter)
-		cmd.SysProcAttr = &syscall.SysProcAttr{
-			CreationFlags: syscall.CREATE_NEW_PROCESS_GROUP | windows.CREATE_NO_WINDOW,
-			HideWindow:    true,
-		}
-
-		if startErr := cmd.Start(); startErr != nil {
-			logError(fmt.Sprintf("Failed to restart tunnel: %v", startErr))
-			_ = logFile.Close()
-			tm.logFile = nil
-			tm.logWriter = nil
-			tm.mu.Unlock()
-			continue
-		}
-
-		tm.process = cmd.Process
-		tm.pgid = uint32(tm.process.Pid)
-		tm.isRunning = true
-		logInfo(fmt.Sprintf("Tunnel restarted: PID=%d (app=%s)", tm.process.Pid, appname))
-		tm.mu.Unlock()
+	return map[string]interface{}{
+		"status":       "running",
+		"pid":          pid,
+		"singbox_path": tm.singboxPath,
+		"config_path":  tm.configPath,
+		"log_path":     tm.logPath,
+		"restarts":     tm.supervisor.Restarts(),
 	}
 }
 
@@ -508,14 +339,13 @@ func (h *PlatformHTTPHandler) GetStatus() map[string]interface{} {
 // Windows environment helpers
 // ---------------------------------------------------------------------------
 
-func buildChildEnv(username string) []string {
+func buildChildEnv(profilePath string) []string {
 	env := append([]string{}, os.Environ()...)
 
-	if username == "" {
+	if profilePath == "" {
 		return env
 	}
 
-	profilePath := filepath.Join("C:\\Users", username)
 	roamingAppData := filepath.Join(profilePath, "AppData", "Roaming")
 	localAppData := filepath.Join(profilePath, "AppData", "Local")
 	tempPath := filepath.Join(localAppData, "Temp")
@@ -565,17 +395,15 @@ func (s *rmService) Execute(args []string, r <-chan svc.ChangeRequest, changes c
 
 	platformHandler := &PlatformHTTPHandler{tunnelManager: s.tunnelManager}
 	handler := shared.NewHTTPHandlerWithLogs(platformHandler, recentLogs, shared.LOG_RETENTION, shared.LOG_TITLE)
-	s.httpServer = &http.Server{
-		Addr:    fmt.Sprintf("127.0.0.1:%d", shared.HTTP_PORT),
-		Handler: handler,
-	}
+	s.httpServer = shared.NewServer(handler)
 
-	go func() {
-		logInfo(fmt.Sprintf("HTTP server listening on port %d", shared.HTTP_PORT))
-		if err := s.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			logError(fmt.Sprintf("HTTP server error: %v", err))
+	go shared.ServeWithRetry(s.httpServer, func(isError bool, msg string) {
+		if isError {
+			logError(msg)
+		} else {
+			logInfo(msg)
 		}
-	}()
+	})
 
 	s.appMonitor.Start()
 
@@ -626,6 +454,10 @@ func runService(name string) {
 
 	logInfo("Windows service process starting")
 
+	if err := ensureRecoveryActions(name); err != nil {
+		logError(fmt.Sprintf("Failed to configure service recovery actions: %v", err))
+	}
+
 	tunnelManager := NewTunnelManager()
 	appMonitor := shared.NewAppMonitor(tunnelManager, shared.APP_PING_URL, shared.APP_CHECK_INTERVAL)
 
@@ -673,12 +505,38 @@ func installService(name, displayName, desc string) error {
 	}
 	defer s.Close()
 
+	if err = ensureRecoveryActions(name); err != nil {
+		log.Printf("Warning: failed to configure recovery actions: %v", err)
+	}
+
 	if err = eventlog.InstallAsEventCreate(name, eventlog.Error|eventlog.Warning|eventlog.Info); err != nil {
 		s.Delete()
 		return fmt.Errorf("eventlog install failed: %v", err)
 	}
 
 	return nil
+}
+
+// ensureRecoveryActions makes SCM restart the service after a crash. ProxyBridge registers
+// the service with plain "sc create", which leaves recovery disabled.
+func ensureRecoveryActions(name string) error {
+	m, err := mgr.Connect()
+	if err != nil {
+		return err
+	}
+	defer m.Disconnect()
+
+	s, err := m.OpenService(name)
+	if err != nil {
+		return err
+	}
+	defer s.Close()
+
+	return s.SetRecoveryActions([]mgr.RecoveryAction{
+		{Type: mgr.ServiceRestart, Delay: 3 * time.Second},
+		{Type: mgr.ServiceRestart, Delay: 3 * time.Second},
+		{Type: mgr.ServiceRestart, Delay: 10 * time.Second},
+	}, uint32((24 * time.Hour).Seconds()))
 }
 
 func removeService(name string) error {
@@ -829,17 +687,9 @@ func main() {
 
 	platformHandler := &PlatformHTTPHandler{tunnelManager: tunnelManager}
 	handler := shared.NewHTTPHandlerWithLogs(platformHandler, recentLogs, shared.LOG_RETENTION, shared.LOG_TITLE)
-	server := &http.Server{
-		Addr:    fmt.Sprintf("127.0.0.1:%d", shared.HTTP_PORT),
-		Handler: handler,
-	}
+	server := shared.NewServer(handler)
 
-	go func() {
-		log.Printf("HTTP server listening on port %d", shared.HTTP_PORT)
-		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("HTTP server error: %v", err)
-		}
-	}()
+	go shared.ServeWithRetry(server, func(_ bool, msg string) { log.Println(msg) })
 
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt)

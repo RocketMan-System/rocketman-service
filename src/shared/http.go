@@ -2,6 +2,8 @@ package shared
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -70,7 +72,7 @@ func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		RespondJSON(w, http.StatusOK, result)
 
 	case "/ping":
-		RespondJSON(w, http.StatusOK, map[string]interface{}{"status": "ok"})
+		RespondJSON(w, http.StatusOK, map[string]interface{}{"status": "ok", "version": VERSION})
 
 	default:
 		RespondJSON(w, http.StatusNotFound, map[string]interface{}{"error": "Endpoint not found"})
@@ -110,4 +112,29 @@ func (h *HTTPHandler) handleLogs(w http.ResponseWriter, r *http.Request) {
 func RespondJSON(w http.ResponseWriter, code int, data interface{}) {
 	w.WriteHeader(code)
 	json.NewEncoder(w).Encode(data)
+}
+
+// NewServer creates the control HTTP server bound to localhost.
+func NewServer(handler http.Handler) *http.Server {
+	return &http.Server{
+		Addr:              fmt.Sprintf("127.0.0.1:%d", HTTP_PORT),
+		Handler:           handler,
+		ReadHeaderTimeout: 5 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
+}
+
+// ServeWithRetry runs the server until Shutdown, retrying when the port can't be bound
+// (e.g. the previous instance is still releasing it) instead of leaving the service without API.
+func ServeWithRetry(server *http.Server, logf func(isError bool, msg string)) {
+	for {
+		logf(false, fmt.Sprintf("HTTP server listening on %s", server.Addr))
+		err := server.ListenAndServe()
+		if err == nil || errors.Is(err, http.ErrServerClosed) {
+			return
+		}
+		logf(true, fmt.Sprintf("HTTP server error: %v, retrying in 2s", err))
+		time.Sleep(2 * time.Second)
+	}
 }
