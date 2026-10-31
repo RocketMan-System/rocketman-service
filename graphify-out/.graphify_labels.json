@@ -17,10 +17,12 @@
   "15": "build-windows.sh",
   "16": "github.com/xanderwp/proxybridgeservice",
   "17": "config.go",
-  "18": "os.Process",
+  "18": "pre-commit",
   "19": "proc_windows.go",
   "20": "testSupervisor",
   "21": "PidFile",
   "22": "proc_darwin.go",
-  "23": "proc_linux.go"
+  "23": "proc_linux.go",
+  "24": "SKILL.md",
+  "25": "install-git-hooks.sh"
 }

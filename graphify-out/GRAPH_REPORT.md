@@ -1,16 +1,16 @@
-# Graph Report - ProxyBridgeService  (2026-10-28)
+# Graph Report - ProxyBridgeService  (2026-10-31)
 
 ## Corpus Check
-- 28 files · ~12,118 words
+- 31 files · ~12,552 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 247 nodes · 507 edges · 24 communities (16 shown, 4 thin omitted)
+- 254 nodes · 511 edges · 26 communities (15 shown, 7 thin omitted)
 - Extraction: 99% EXTRACTED · 1% INFERRED · 0% AMBIGUOUS · INFERRED: 4 edges (avg confidence: 0.85)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `4dfc75e4`
+- Built from commit: `e2bf242f`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -31,10 +31,12 @@
 - build-linux.sh
 - build-windows.sh
 - github.com/xanderwp/proxybridgeservice
-- os.Process
+- pre-commit
 - proc_windows.go
 - testSupervisor
 - PidFile
+- SKILL.md
+- install-git-hooks.sh
 
 ## God Nodes (most connected - your core abstractions)
 1. `Supervisor` - 19 edges
@@ -63,7 +65,7 @@
 ## Import Cycles
 - None detected.
 
-## Communities (24 total, 4 thin omitted)
+## Communities (26 total, 7 thin omitted)
 
 ### Community 0 - "windows/main.go"
 Cohesion: 0.13
@@ -74,12 +76,12 @@ Cohesion: 0.14
 Nodes (13): os/exec.Cmd, sync.Mutex, PlatformHTTPHandler, TunnelManager, addInterfaceToTrustedZone(), ensureInterfaceInTrustedZone(), getTunInterfaceNameFromConfig(), main() (+5 more)
 
 ### Community 2 - "TunnelManager"
-Cohesion: 0.18
-Nodes (7): PlatformHTTPHandler, QuarantineMonitor, TunnelManager, main(), NewQuarantineMonitor(), NewTunnelManager(), resolveBasePath()
+Cohesion: 0.17
+Nodes (8): sync.WaitGroup, PlatformHTTPHandler, QuarantineMonitor, TunnelManager, main(), NewQuarantineMonitor(), NewTunnelManager(), resolveBasePath()
 
 ### Community 3 - "time.Duration"
-Cohesion: 0.18
-Nodes (15): net/http.Request, net/http.ResponseWriter, time.Duration, HTTPHandler, ITunnelOperations, LogEntry, LogMirrorWriter, RecentLogStore (+7 more)
+Cohesion: 0.16
+Nodes (17): net/http.Request, net/http.ResponseWriter, time.Duration, time.Time, HTTPHandler, ITunnelOperations, LogEntry, LogMirrorWriter (+9 more)
 
 ### Community 4 - "install-linux.sh"
 Cohesion: 0.40
@@ -94,8 +96,8 @@ Cohesion: 0.42
 Nodes (11): check_root(), create_plist(), detect_arch(), download_binary(), log_error(), log_info(), log_warn(), main() (+3 more)
 
 ### Community 7 - "Supervisor"
-Cohesion: 0.27
-Nodes (5): childProcess, SupervisorHooks, supervisorSession, Supervisor, NewSupervisor()
+Cohesion: 0.15
+Nodes (9): os.Process, childProcess, SupervisorHooks, supervisorSession, Supervisor, NewSupervisor(), ForceKill(), SignalTerm() (+1 more)
 
 ### Community 8 - "linux/uninstall.sh"
 Cohesion: 0.47
@@ -106,8 +108,8 @@ Cohesion: 0.47
 Nodes (9): check_root(), log_error(), log_info(), log_warn(), main(), remove_files(), uninstall.sh script, stop_service() (+1 more)
 
 ### Community 10 - "AppMonitor"
-Cohesion: 0.21
-Nodes (8): net/http.Client, sync.Once, sync.WaitGroup, time.Time, ITunnelManager, ComputeRestartDelay(), AppMonitor, NewAppMonitor()
+Cohesion: 0.31
+Nodes (5): net/http.Client, sync.Once, ITunnelManager, AppMonitor, NewAppMonitor()
 
 ### Community 11 - "validate"
 Cohesion: 0.70
@@ -116,10 +118,6 @@ Nodes (4): validate script, render_progress(), run_build(), show_help()
 ### Community 12 - "tunnel.go"
 Cohesion: 0.50
 Nodes (3): TunnelStartResult, TunnelStatus, TunnelStopResult
-
-### Community 18 - "os.Process"
-Cohesion: 0.25
-Nodes (4): os.Process, ForceKill(), SignalTerm(), sendCtrlBreak()
 
 ### Community 19 - "proc_windows.go"
 Cohesion: 0.29
@@ -130,22 +128,24 @@ Cohesion: 0.57
 Nodes (7): testing.T, TestPidFileKillStale(), testSupervisor(), TestSupervisorDetectsExitAndRestarts(), TestSupervisorExitedImmediately(), TestSupervisorStartDuringStop(), TestSupervisorStartStop()
 
 ## Knowledge Gaps
-- **6 isolated node(s):** `github.com/xanderwp/proxybridgeservice`, `TunnelStartResult`, `TunnelStopResult`, `TunnelStatus`, `build-linux.sh script` (+1 more)
-  These have ≤1 connection - possible missing edges or undocumented components. (Counts symbols only; 42 node(s) total have ≤1 connection when file, concept and rationale nodes are included.)
-- **4 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **8 isolated node(s):** `github.com/xanderwp/proxybridgeservice`, `install-git-hooks.sh script`, `TunnelStartResult`, `TunnelStopResult`, `TunnelStatus` (+3 more)
+  These have ≤1 connection - possible missing edges or undocumented components. (Counts symbols only; 48 node(s) total have ≤1 connection when file, concept and rationale nodes are included.)
+- **7 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
 - **Why does `TunnelManager` connect `windows/main.go` to `TunnelManager`, `proc_windows.go`, `PidFile`, `Supervisor`?**
-  _High betweenness centrality (0.099) - this node is a cross-community bridge._
+  _High betweenness centrality (0.093) - this node is a cross-community bridge._
 - **Why does `Supervisor` connect `Supervisor` to `windows/main.go`, `TunnelManager`, `TunnelManager`, `testSupervisor`?**
-  _High betweenness centrality (0.096) - this node is a cross-community bridge._
-- **Why does `TunnelManager` connect `TunnelManager` to `os.Process`, `time.Duration`, `PidFile`, `Supervisor`?**
-  _High betweenness centrality (0.059) - this node is a cross-community bridge._
-- **What connects `github.com/xanderwp/proxybridgeservice`, `TunnelStartResult`, `TunnelStopResult` to the rest of the system?**
-  _6 weakly-connected nodes found - possible documentation gaps or missing edges._
+  _High betweenness centrality (0.091) - this node is a cross-community bridge._
+- **Why does `TunnelManager` connect `TunnelManager` to `time.Duration`, `PidFile`, `Supervisor`?**
+  _High betweenness centrality (0.056) - this node is a cross-community bridge._
+- **What connects `github.com/xanderwp/proxybridgeservice`, `install-git-hooks.sh script`, `TunnelStartResult` to the rest of the system?**
+  _8 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `windows/main.go` be split into smaller, more focused modules?**
   _Cohesion score 0.1253968253968254 - nodes in this community are weakly interconnected._
 - **Should `TunnelManager` be split into smaller, more focused modules?**
   _Cohesion score 0.1383399209486166 - nodes in this community are weakly interconnected._
+- **Should `Supervisor` be split into smaller, more focused modules?**
+  _Cohesion score 0.1476923076923077 - nodes in this community are weakly interconnected._

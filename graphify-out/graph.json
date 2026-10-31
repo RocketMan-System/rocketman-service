@@ -675,28 +675,6 @@
       "source_location": ""
     },
     {
-      "id": "go_type_sync_waitgroup",
-      "label": "sync.WaitGroup",
-      "_origin": "ast",
-      "community": 10,
-      "community_name": "AppMonitor",
-      "file_type": "code",
-      "norm_label": "sync.waitgroup",
-      "source_file": "",
-      "source_location": ""
-    },
-    {
-      "id": "go_type_time_time",
-      "label": "time.Time",
-      "_origin": "ast",
-      "community": 10,
-      "community_name": "AppMonitor",
-      "file_type": "code",
-      "norm_label": "time.time",
-      "source_file": "",
-      "source_location": ""
-    },
-    {
       "id": "shared_appmonitor_checkappalive",
       "label": ".checkAppAlive()",
       "_origin": "ast",
@@ -761,28 +739,6 @@
       "norm_label": "itunnelmanager",
       "source_file": "src/shared/monitor.go",
       "source_location": "L13"
-    },
-    {
-      "id": "src_shared_lifecycle",
-      "label": "lifecycle.go",
-      "_origin": "ast",
-      "community": 10,
-      "community_name": "AppMonitor",
-      "file_type": "code",
-      "norm_label": "lifecycle.go",
-      "source_file": "src/shared/lifecycle.go",
-      "source_location": "L1"
-    },
-    {
-      "id": "src_shared_lifecycle_computerestartdelay",
-      "label": "ComputeRestartDelay()",
-      "_origin": "ast",
-      "community": 10,
-      "community_name": "AppMonitor",
-      "file_type": "code",
-      "norm_label": "computerestartdelay()",
-      "source_file": "src/shared/lifecycle.go",
-      "source_location": "L34"
     },
     {
       "id": "src_shared_monitor",
@@ -1054,103 +1010,49 @@
       "source_location": "L1"
     },
     {
-      "id": "go_type_os_process",
-      "label": "os.Process",
+      "id": "scripts_git_hooks_pre_commit",
+      "label": "pre-commit",
       "_origin": "ast",
       "community": 18,
-      "community_name": "os.Process",
+      "community_name": "pre-commit",
       "file_type": "code",
-      "norm_label": "os.process",
-      "source_file": "",
-      "source_location": ""
-    },
-    {
-      "id": "linux_tunnelmanager_onstarted",
-      "label": ".onStarted()",
-      "_origin": "ast",
-      "community": 18,
-      "community_name": "os.Process",
-      "file_type": "code",
-      "norm_label": ".onstarted()",
-      "source_file": "src/linux/main.go",
-      "source_location": "L195"
-    },
-    {
-      "id": "macos_tunnelmanager_onstarted",
-      "label": ".onStarted()",
-      "_origin": "ast",
-      "community": 18,
-      "community_name": "os.Process",
-      "file_type": "code",
-      "norm_label": ".onstarted()",
-      "source_file": "src/macos/main.go",
-      "source_location": "L182"
-    },
-    {
-      "id": "src_shared_unix_process",
-      "label": "unix_process.go",
-      "_origin": "ast",
-      "community": 18,
-      "community_name": "os.Process",
-      "file_type": "code",
-      "norm_label": "unix_process.go",
-      "source_file": "src/shared/unix_process.go",
+      "metadata": {
+        "language": "bash",
+        "kind": "file"
+      },
+      "norm_label": "pre-commit",
+      "source_file": "scripts/git-hooks/pre-commit",
       "source_location": "L1"
     },
     {
-      "id": "src_shared_unix_process_forcekill",
-      "label": "ForceKill()",
+      "id": "scripts_git_hooks_pre_commit__entry",
+      "label": "pre-commit script",
       "_origin": "ast",
       "community": 18,
-      "community_name": "os.Process",
+      "community_name": "pre-commit",
       "file_type": "code",
-      "norm_label": "forcekill()",
-      "source_file": "src/shared/unix_process.go",
-      "source_location": "L25"
+      "metadata": {
+        "language": "bash",
+        "kind": "bash_entrypoint"
+      },
+      "norm_label": "pre-commit script",
+      "source_file": "scripts/git-hooks/pre-commit",
+      "source_location": "L1"
     },
     {
-      "id": "src_shared_unix_process_killpid",
-      "label": "killPID()",
+      "id": "scripts_git_hooks_pre_commit_pythonhashseed",
+      "label": "PYTHONHASHSEED",
       "_origin": "ast",
       "community": 18,
-      "community_name": "os.Process",
+      "community_name": "pre-commit",
       "file_type": "code",
-      "norm_label": "killpid()",
-      "source_file": "src/shared/unix_process.go",
-      "source_location": "L39"
-    },
-    {
-      "id": "src_shared_unix_process_pidalive",
-      "label": "pidAlive()",
-      "_origin": "ast",
-      "community": 18,
-      "community_name": "os.Process",
-      "file_type": "code",
-      "norm_label": "pidalive()",
-      "source_file": "src/shared/unix_process.go",
-      "source_location": "L35"
-    },
-    {
-      "id": "src_shared_unix_process_signalterm",
-      "label": "SignalTerm()",
-      "_origin": "ast",
-      "community": 18,
-      "community_name": "os.Process",
-      "file_type": "code",
-      "norm_label": "signalterm()",
-      "source_file": "src/shared/unix_process.go",
-      "source_location": "L14"
-    },
-    {
-      "id": "src_windows_main_sendctrlbreak",
-      "label": "sendCtrlBreak()",
-      "_origin": "ast",
-      "community": 18,
-      "community_name": "os.Process",
-      "file_type": "code",
-      "norm_label": "sendctrlbreak()",
-      "source_file": "src/windows/main.go",
-      "source_location": "L119"
+      "metadata": {
+        "language": "bash",
+        "kind": "code"
+      },
+      "norm_label": "pythonhashseed",
+      "source_file": "scripts/git-hooks/pre-commit",
+      "source_location": "L23"
     },
     {
       "id": "go_type_golang_org_x_sys_windows_handle",
@@ -1239,6 +1141,17 @@
       "norm_label": "processexecutable()",
       "source_file": "src/shared/proc_windows.go",
       "source_location": "L37"
+    },
+    {
+      "id": "go_type_sync_waitgroup",
+      "label": "sync.WaitGroup",
+      "_origin": "ast",
+      "community": 2,
+      "community_name": "TunnelManager",
+      "file_type": "code",
+      "norm_label": "sync.waitgroup",
+      "source_file": "",
+      "source_location": ""
     },
     {
       "id": "macos_platformhttphandler",
@@ -1670,6 +1583,64 @@
       "source_location": "L8"
     },
     {
+      "id": "claude_skills_commit_skill",
+      "label": "SKILL.md",
+      "_origin": "ast",
+      "community": 24,
+      "community_name": "SKILL.md",
+      "file_type": "document",
+      "frontmatter": {
+        "name": "commit",
+        "description": "Use whenever creating a git commit in this repository. Keeps graphify-out/ (the versioned knowledge graph) in sync and committed together with code changes."
+      },
+      "node_kind": "page",
+      "norm_label": "skill.md",
+      "source_file": ".claude/skills/commit/SKILL.md",
+      "source_location": "L1"
+    },
+    {
+      "id": "claude_skills_commit_skill_committing_in_proxybridgeservice",
+      "label": "Committing in ProxyBridgeService",
+      "_origin": "ast",
+      "community": 24,
+      "community_name": "SKILL.md",
+      "file_type": "document",
+      "node_kind": "heading",
+      "norm_label": "committing in proxybridgeservice",
+      "source_file": ".claude/skills/commit/SKILL.md",
+      "source_location": "L6"
+    },
+    {
+      "id": "scripts_install_git_hooks",
+      "label": "install-git-hooks.sh",
+      "_origin": "ast",
+      "community": 25,
+      "community_name": "install-git-hooks.sh",
+      "file_type": "code",
+      "metadata": {
+        "language": "bash",
+        "kind": "file"
+      },
+      "norm_label": "install-git-hooks.sh",
+      "source_file": "scripts/install-git-hooks.sh",
+      "source_location": "L1"
+    },
+    {
+      "id": "scripts_install_git_hooks_sh__entry",
+      "label": "install-git-hooks.sh script",
+      "_origin": "ast",
+      "community": 25,
+      "community_name": "install-git-hooks.sh",
+      "file_type": "code",
+      "metadata": {
+        "language": "bash",
+        "kind": "bash_entrypoint"
+      },
+      "norm_label": "install-git-hooks.sh script",
+      "source_file": "scripts/install-git-hooks.sh",
+      "source_location": "L1"
+    },
+    {
       "id": "go_type_net_http_request",
       "label": "net/http.Request",
       "_origin": "ast",
@@ -1699,6 +1670,17 @@
       "community_name": "time.Duration",
       "file_type": "code",
       "norm_label": "time.duration",
+      "source_file": "",
+      "source_location": ""
+    },
+    {
+      "id": "go_type_time_time",
+      "label": "time.Time",
+      "_origin": "ast",
+      "community": 3,
+      "community_name": "time.Duration",
+      "file_type": "code",
+      "norm_label": "time.time",
       "source_file": "",
       "source_location": ""
     },
@@ -1877,6 +1859,28 @@
       "norm_label": "respondjson()",
       "source_file": "src/shared/http.go",
       "source_location": "L112"
+    },
+    {
+      "id": "src_shared_lifecycle",
+      "label": "lifecycle.go",
+      "_origin": "ast",
+      "community": 3,
+      "community_name": "time.Duration",
+      "file_type": "code",
+      "norm_label": "lifecycle.go",
+      "source_file": "src/shared/lifecycle.go",
+      "source_location": "L1"
+    },
+    {
+      "id": "src_shared_lifecycle_computerestartdelay",
+      "label": "ComputeRestartDelay()",
+      "_origin": "ast",
+      "community": 3,
+      "community_name": "time.Duration",
+      "file_type": "code",
+      "norm_label": "computerestartdelay()",
+      "source_file": "src/shared/lifecycle.go",
+      "source_location": "L34"
     },
     {
       "id": "src_shared_logs",
@@ -2500,6 +2504,39 @@
       "source_location": "L166"
     },
     {
+      "id": "go_type_os_process",
+      "label": "os.Process",
+      "_origin": "ast",
+      "community": 7,
+      "community_name": "Supervisor",
+      "file_type": "code",
+      "norm_label": "os.process",
+      "source_file": "",
+      "source_location": ""
+    },
+    {
+      "id": "linux_tunnelmanager_onstarted",
+      "label": ".onStarted()",
+      "_origin": "ast",
+      "community": 7,
+      "community_name": "Supervisor",
+      "file_type": "code",
+      "norm_label": ".onstarted()",
+      "source_file": "src/linux/main.go",
+      "source_location": "L195"
+    },
+    {
+      "id": "macos_tunnelmanager_onstarted",
+      "label": ".onStarted()",
+      "_origin": "ast",
+      "community": 7,
+      "community_name": "Supervisor",
+      "file_type": "code",
+      "norm_label": ".onstarted()",
+      "source_file": "src/macos/main.go",
+      "source_location": "L182"
+    },
+    {
       "id": "shared_childprocess",
       "label": "childProcess",
       "_origin": "ast",
@@ -2685,6 +2722,72 @@
       "norm_label": "newsupervisor()",
       "source_file": "src/shared/supervisor.go",
       "source_location": "L79"
+    },
+    {
+      "id": "src_shared_unix_process",
+      "label": "unix_process.go",
+      "_origin": "ast",
+      "community": 7,
+      "community_name": "Supervisor",
+      "file_type": "code",
+      "norm_label": "unix_process.go",
+      "source_file": "src/shared/unix_process.go",
+      "source_location": "L1"
+    },
+    {
+      "id": "src_shared_unix_process_forcekill",
+      "label": "ForceKill()",
+      "_origin": "ast",
+      "community": 7,
+      "community_name": "Supervisor",
+      "file_type": "code",
+      "norm_label": "forcekill()",
+      "source_file": "src/shared/unix_process.go",
+      "source_location": "L25"
+    },
+    {
+      "id": "src_shared_unix_process_killpid",
+      "label": "killPID()",
+      "_origin": "ast",
+      "community": 7,
+      "community_name": "Supervisor",
+      "file_type": "code",
+      "norm_label": "killpid()",
+      "source_file": "src/shared/unix_process.go",
+      "source_location": "L39"
+    },
+    {
+      "id": "src_shared_unix_process_pidalive",
+      "label": "pidAlive()",
+      "_origin": "ast",
+      "community": 7,
+      "community_name": "Supervisor",
+      "file_type": "code",
+      "norm_label": "pidalive()",
+      "source_file": "src/shared/unix_process.go",
+      "source_location": "L35"
+    },
+    {
+      "id": "src_shared_unix_process_signalterm",
+      "label": "SignalTerm()",
+      "_origin": "ast",
+      "community": 7,
+      "community_name": "Supervisor",
+      "file_type": "code",
+      "norm_label": "signalterm()",
+      "source_file": "src/shared/unix_process.go",
+      "source_location": "L14"
+    },
+    {
+      "id": "src_windows_main_sendctrlbreak",
+      "label": "sendCtrlBreak()",
+      "_origin": "ast",
+      "community": 7,
+      "community_name": "Supervisor",
+      "file_type": "code",
+      "norm_label": "sendctrlbreak()",
+      "source_file": "src/windows/main.go",
+      "source_location": "L119"
     },
     {
       "id": "src_linux_uninstall",
@@ -6601,6 +6704,39 @@
       "weight": 1.0
     },
     {
+      "source": "claude_skills_commit_skill",
+      "target": "claude_skills_commit_skill_committing_in_proxybridgeservice",
+      "relation": "contains",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": ".claude/skills/commit/SKILL.md",
+      "source_location": "L6",
+      "weight": 1.0
+    },
+    {
+      "source": "scripts_git_hooks_pre_commit",
+      "target": "scripts_git_hooks_pre_commit__entry",
+      "relation": "contains",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "scripts/git-hooks/pre-commit",
+      "source_location": "L1",
+      "weight": 1.0
+    },
+    {
+      "source": "scripts_install_git_hooks",
+      "target": "scripts_install_git_hooks_sh__entry",
+      "relation": "contains",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "scripts/install-git-hooks.sh",
+      "source_location": "L1",
+      "weight": 1.0
+    },
+    {
       "source": "src_linux_install",
       "target": "src_linux_install_sh__entry",
       "relation": "contains",
@@ -7588,6 +7724,17 @@
       "confidence_score": 1.0,
       "source_file": "tests/validate",
       "source_location": "L1",
+      "weight": 1.0
+    },
+    {
+      "source": "scripts_git_hooks_pre_commit",
+      "target": "scripts_git_hooks_pre_commit_pythonhashseed",
+      "relation": "defines",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "scripts/git-hooks/pre-commit",
+      "source_location": "L23",
       "weight": 1.0
     },
     {
@@ -8872,5 +9019,5 @@
     }
   ],
   "hyperedges": [],
-  "built_at_commit": "4dfc75e4e78e72308c1c21dc8cd6a794c3835ee3"
+  "built_at_commit": "e2bf242f80674f8afe45607dbcfe6c032c5e7041"
 }

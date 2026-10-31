@@ -7,10 +7,12 @@ description: Use whenever creating a git commit in this repository. Keeps graphi
 
 `graphify-out/` is versioned: the knowledge graph must always match the committed code.
 
-1. If any code files changed, run `graphify update .` first (AST-only, no API cost).
-2. Stage the code changes **and** `graphify-out/` together: `git add <changed files> graphify-out/`.
+1. The `pre-commit` hook rebuilds the graph (`graphify update .`) and stages `graphify-out/`
+   automatically. If `.git/hooks/pre-commit` is missing, run `scripts/install-git-hooks.sh` first;
+   if graphify is unavailable, run `graphify update .` and `git add graphify-out/` by hand.
+2. Stage only the code changes yourself; the hook adds `graphify-out/`.
    `.gitignore` already drops graphify's local state (`cache/`, `manifest.json`, `cost.json`,
-   `.graphify_root`, `.graphify_python`), so never force-add those.
+   `.graphify_root`, `.graphify_python`, dated snapshot folders), so never force-add those.
 3. Commit graph and code in the same commit; `git status` must show nothing under `graphify-out/` afterwards.
 4. Also commit changes under `.cursor/` and `.claude/` (agent rules and skills) when they are part of the task.
 5. Use conventional commit messages (`feat:`, `fix:`, `chore:` …), matching `git log`.
