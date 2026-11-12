@@ -337,47 +337,91 @@ func waitForInterface(iface string, timeout time.Duration) error {
 // FIREWALL_CMD_TIMEOUT stops a hung firewalld D-Bus call from blocking start/stop.
 const FIREWALL_CMD_TIMEOUT = 3 * time.Second
 
+// TRUSTED_ZONE_SETTLE is how long the binding is re-checked after it is first
+// applied, so a NetworkManager (re)activation of the tun profile cannot quietly
+// move the interface back to its own zone.
+const TRUSTED_ZONE_SETTLE = 10 * time.Second
+
 var (
 	errFirewallNotRunning = errors.New("firewalld not running")
 	errUnknownInterface   = errors.New("unknown interface")
+	errZoneConflict       = errors.New("zone conflict")
+	errNoZone             = errors.New("no zone")
 )
 
-func addInterfaceToTrustedZone(iface string) error {
-	return runFirewallCmd("--zone=trusted", "--add-interface="+iface)
+// bindInterfaceToTrustedZone uses --change-interface rather than --add-interface:
+// NetworkManager binds tun devices it manages to a zone of its own (usually
+// public), and --add-interface then fails with ZONE_CONFLICT. In that zone the
+// TCP connections the system stack loops back through the interface are rejected.
+func bindInterfaceToTrustedZone(iface string) error {
+	return runFirewallCmd("--zone=trusted", "--change-interface="+iface)
 }
 
 func removeInterfaceFromTrustedZone(iface string) error {
 	err := runFirewallCmd("--zone=trusted", "--remove-interface="+iface)
-	if err == nil || errors.Is(err, errFirewallNotRunning) || errors.Is(err, errUnknownInterface) {
+	if err == nil || errors.Is(err, errFirewallNotRunning) || errors.Is(err, errUnknownInterface) || errors.Is(err, errZoneConflict) {
 		return nil
 	}
 	return err
 }
 
+func getZoneOfInterface(iface string) (string, error) {
+	zone, err := runFirewallCmdOutput("--get-zone-of-interface=" + iface)
+	if errors.Is(err, errNoZone) {
+		return "", nil
+	}
+	return zone, err
+}
+
 func ensureInterfaceInTrustedZone(iface string, timeout time.Duration) (bool, error) {
-	deadline := time.Now().Add(timeout)
+	if err := waitForInterface(iface, timeout); err != nil {
+		return false, err
+	}
+
+	bound := false
+	settleUntil := time.Now().Add(TRUSTED_ZONE_SETTLE)
 	for {
-		err := addInterfaceToTrustedZone(iface)
-		if err == nil {
-			return true, nil
+		// The tunnel was stopped meanwhile — nothing left to bind.
+		if _, err := os.Stat(filepath.Join("/sys/class/net", iface)); err != nil {
+			return bound, nil
 		}
+
+		zone, err := getZoneOfInterface(iface)
 		if errors.Is(err, errFirewallNotRunning) {
 			return false, nil
 		}
-		if errors.Is(err, errUnknownInterface) {
-			if time.Now().After(deadline) {
-				return false, nil
-			}
-			time.Sleep(1 * time.Second)
-			continue
+		if err != nil {
+			return bound, err
 		}
-		return false, err
+
+		if zone != "trusted" {
+			if err := bindInterfaceToTrustedZone(iface); err != nil {
+				if errors.Is(err, errFirewallNotRunning) {
+					return false, nil
+				}
+				return bound, err
+			}
+			if bound {
+				log.Printf("Interface %s was moved to zone %q, re-bound to trusted", iface, zone)
+			}
+			bound = true
+		}
+
+		if time.Now().After(settleUntil) {
+			return bound, nil
+		}
+		time.Sleep(1 * time.Second)
 	}
 }
 
 func runFirewallCmd(args ...string) error {
+	_, err := runFirewallCmdOutput(args...)
+	return err
+}
+
+func runFirewallCmdOutput(args ...string) (string, error) {
 	if _, err := exec.LookPath("firewall-cmd"); err != nil {
-		return errFirewallNotRunning
+		return "", errFirewallNotRunning
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), FIREWALL_CMD_TIMEOUT)
@@ -385,21 +429,27 @@ func runFirewallCmd(args ...string) error {
 
 	cmd := exec.CommandContext(ctx, "firewall-cmd", args...)
 	out, err := cmd.CombinedOutput()
+	trimmed := strings.TrimSpace(string(out))
 	if err != nil {
-		trimmed := strings.TrimSpace(string(out))
 		if strings.Contains(trimmed, "FirewallD is not running") {
-			return errFirewallNotRunning
+			return "", errFirewallNotRunning
 		}
 		if strings.Contains(trimmed, "UNKNOWN_INTERFACE") {
-			return fmt.Errorf("%w: %s", errUnknownInterface, trimmed)
+			return "", fmt.Errorf("%w: %s", errUnknownInterface, trimmed)
+		}
+		if strings.Contains(trimmed, "ZONE_CONFLICT") {
+			return "", fmt.Errorf("%w: %s", errZoneConflict, trimmed)
+		}
+		if trimmed == "no zone" {
+			return "", errNoZone
 		}
 		if trimmed == "" {
-			return err
+			return "", err
 		}
-		return fmt.Errorf("%w: %s", err, trimmed)
+		return "", fmt.Errorf("%w: %s", err, trimmed)
 	}
 
-	return nil
+	return trimmed, nil
 }
 
 // ---------------------------------------------------------------------------

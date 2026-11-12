@@ -4,7 +4,7 @@ import "time"
 
 // VERSION is reported by -version and /ping. CI overrides it from the VERSION file via
 // -ldflags "-X github.com/xanderwp/proxybridgeservice/src/shared.VERSION=...".
-var VERSION = "1.4.0"
+var VERSION = "1.4.1"
 
 // Configuration constants
 const (

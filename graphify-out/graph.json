@@ -400,17 +400,6 @@
       "source_location": "L261"
     },
     {
-      "id": "go_type_os_exec_cmd",
-      "label": "os/exec.Cmd",
-      "_origin": "ast",
-      "community": 1,
-      "community_name": "TunnelManager",
-      "file_type": "code",
-      "norm_label": "os/exec.cmd",
-      "source_file": "",
-      "source_location": ""
-    },
-    {
       "id": "go_type_sync_mutex",
       "label": "sync.Mutex",
       "_origin": "ast",
@@ -499,17 +488,6 @@
       "source_location": "L246"
     },
     {
-      "id": "linux_tunnelmanager_launch",
-      "label": ".launch()",
-      "_origin": "ast",
-      "community": 1,
-      "community_name": "TunnelManager",
-      "file_type": "code",
-      "norm_label": ".launch()",
-      "source_file": "src/linux/main.go",
-      "source_location": "L172"
-    },
-    {
       "id": "linux_tunnelmanager_start",
       "label": ".Start()",
       "_origin": "ast",
@@ -532,17 +510,6 @@
       "source_location": "L221"
     },
     {
-      "id": "macos_tunnelmanager_launch",
-      "label": ".launch()",
-      "_origin": "ast",
-      "community": 1,
-      "community_name": "TunnelManager",
-      "file_type": "code",
-      "norm_label": ".launch()",
-      "source_file": "src/macos/main.go",
-      "source_location": "L159"
-    },
-    {
       "id": "src_linux_main",
       "label": "linux/main.go",
       "_origin": "ast",
@@ -554,15 +521,15 @@
       "source_location": "L1"
     },
     {
-      "id": "src_linux_main_addinterfacetotrustedzone",
-      "label": "addInterfaceToTrustedZone()",
+      "id": "src_linux_main_bindinterfacetotrustedzone",
+      "label": "bindInterfaceToTrustedZone()",
       "_origin": "ast",
       "community": 1,
       "community_name": "TunnelManager",
       "file_type": "code",
-      "norm_label": "addinterfacetotrustedzone()",
+      "norm_label": "bindinterfacetotrustedzone()",
       "source_file": "src/linux/main.go",
-      "source_location": "L345"
+      "source_location": "L356"
     },
     {
       "id": "src_linux_main_ensureinterfaceintrustedzone",
@@ -573,7 +540,7 @@
       "file_type": "code",
       "norm_label": "ensureinterfaceintrustedzone()",
       "source_file": "src/linux/main.go",
-      "source_location": "L357"
+      "source_location": "L376"
     },
     {
       "id": "src_linux_main_gettuninterfacenamefromconfig",
@@ -587,6 +554,17 @@
       "source_location": "L294"
     },
     {
+      "id": "src_linux_main_getzoneofinterface",
+      "label": "getZoneOfInterface()",
+      "_origin": "ast",
+      "community": 1,
+      "community_name": "TunnelManager",
+      "file_type": "code",
+      "norm_label": "getzoneofinterface()",
+      "source_file": "src/linux/main.go",
+      "source_location": "L368"
+    },
+    {
       "id": "src_linux_main_main",
       "label": "main()",
       "_origin": "ast",
@@ -595,7 +573,7 @@
       "file_type": "code",
       "norm_label": "main()",
       "source_file": "src/linux/main.go",
-      "source_location": "L409"
+      "source_location": "L459"
     },
     {
       "id": "src_linux_main_newtunnelmanager",
@@ -617,7 +595,7 @@
       "file_type": "code",
       "norm_label": "removeinterfacefromtrustedzone()",
       "source_file": "src/linux/main.go",
-      "source_location": "L349"
+      "source_location": "L360"
     },
     {
       "id": "src_linux_main_resolvebasepath",
@@ -639,7 +617,18 @@
       "file_type": "code",
       "norm_label": "runfirewallcmd()",
       "source_file": "src/linux/main.go",
-      "source_location": "L378"
+      "source_location": "L417"
+    },
+    {
+      "id": "src_linux_main_runfirewallcmdoutput",
+      "label": "runFirewallCmdOutput()",
+      "_origin": "ast",
+      "community": 1,
+      "community_name": "TunnelManager",
+      "file_type": "code",
+      "norm_label": "runfirewallcmdoutput()",
+      "source_file": "src/linux/main.go",
+      "source_location": "L422"
     },
     {
       "id": "src_linux_main_waitforinterface",
@@ -671,6 +660,17 @@
       "community_name": "AppMonitor",
       "file_type": "code",
       "norm_label": "sync.once",
+      "source_file": "",
+      "source_location": ""
+    },
+    {
+      "id": "go_type_time_time",
+      "label": "time.Time",
+      "_origin": "ast",
+      "community": 10,
+      "community_name": "AppMonitor",
+      "file_type": "code",
+      "norm_label": "time.time",
       "source_file": "",
       "source_location": ""
     },
@@ -739,6 +739,28 @@
       "norm_label": "itunnelmanager",
       "source_file": "src/shared/monitor.go",
       "source_location": "L13"
+    },
+    {
+      "id": "src_shared_lifecycle",
+      "label": "lifecycle.go",
+      "_origin": "ast",
+      "community": 10,
+      "community_name": "AppMonitor",
+      "file_type": "code",
+      "norm_label": "lifecycle.go",
+      "source_file": "src/shared/lifecycle.go",
+      "source_location": "L1"
+    },
+    {
+      "id": "src_shared_lifecycle_computerestartdelay",
+      "label": "ComputeRestartDelay()",
+      "_origin": "ast",
+      "community": 10,
+      "community_name": "AppMonitor",
+      "file_type": "code",
+      "norm_label": "computerestartdelay()",
+      "source_file": "src/shared/lifecycle.go",
+      "source_location": "L34"
     },
     {
       "id": "src_shared_monitor",
@@ -1143,6 +1165,17 @@
       "source_location": "L37"
     },
     {
+      "id": "go_type_os_exec_cmd",
+      "label": "os/exec.Cmd",
+      "_origin": "ast",
+      "community": 2,
+      "community_name": "TunnelManager",
+      "file_type": "code",
+      "norm_label": "os/exec.cmd",
+      "source_file": "",
+      "source_location": ""
+    },
+    {
       "id": "go_type_sync_waitgroup",
       "label": "sync.WaitGroup",
       "_origin": "ast",
@@ -1152,6 +1185,17 @@
       "norm_label": "sync.waitgroup",
       "source_file": "",
       "source_location": ""
+    },
+    {
+      "id": "linux_tunnelmanager_launch",
+      "label": ".launch()",
+      "_origin": "ast",
+      "community": 2,
+      "community_name": "TunnelManager",
+      "file_type": "code",
+      "norm_label": ".launch()",
+      "source_file": "src/linux/main.go",
+      "source_location": "L172"
     },
     {
       "id": "macos_platformhttphandler",
@@ -1295,6 +1339,17 @@
       "norm_label": ".isactive()",
       "source_file": "src/macos/main.go",
       "source_location": "L199"
+    },
+    {
+      "id": "macos_tunnelmanager_launch",
+      "label": ".launch()",
+      "_origin": "ast",
+      "community": 2,
+      "community_name": "TunnelManager",
+      "file_type": "code",
+      "norm_label": ".launch()",
+      "source_file": "src/macos/main.go",
+      "source_location": "L159"
     },
     {
       "id": "macos_tunnelmanager_start",
@@ -1641,6 +1696,105 @@
       "source_location": "L1"
     },
     {
+      "id": "go_type_os_process",
+      "label": "os.Process",
+      "_origin": "ast",
+      "community": 26,
+      "community_name": "os.Process",
+      "file_type": "code",
+      "norm_label": "os.process",
+      "source_file": "",
+      "source_location": ""
+    },
+    {
+      "id": "linux_tunnelmanager_onstarted",
+      "label": ".onStarted()",
+      "_origin": "ast",
+      "community": 26,
+      "community_name": "os.Process",
+      "file_type": "code",
+      "norm_label": ".onstarted()",
+      "source_file": "src/linux/main.go",
+      "source_location": "L195"
+    },
+    {
+      "id": "macos_tunnelmanager_onstarted",
+      "label": ".onStarted()",
+      "_origin": "ast",
+      "community": 26,
+      "community_name": "os.Process",
+      "file_type": "code",
+      "norm_label": ".onstarted()",
+      "source_file": "src/macos/main.go",
+      "source_location": "L182"
+    },
+    {
+      "id": "src_shared_unix_process",
+      "label": "unix_process.go",
+      "_origin": "ast",
+      "community": 26,
+      "community_name": "os.Process",
+      "file_type": "code",
+      "norm_label": "unix_process.go",
+      "source_file": "src/shared/unix_process.go",
+      "source_location": "L1"
+    },
+    {
+      "id": "src_shared_unix_process_forcekill",
+      "label": "ForceKill()",
+      "_origin": "ast",
+      "community": 26,
+      "community_name": "os.Process",
+      "file_type": "code",
+      "norm_label": "forcekill()",
+      "source_file": "src/shared/unix_process.go",
+      "source_location": "L25"
+    },
+    {
+      "id": "src_shared_unix_process_killpid",
+      "label": "killPID()",
+      "_origin": "ast",
+      "community": 26,
+      "community_name": "os.Process",
+      "file_type": "code",
+      "norm_label": "killpid()",
+      "source_file": "src/shared/unix_process.go",
+      "source_location": "L39"
+    },
+    {
+      "id": "src_shared_unix_process_pidalive",
+      "label": "pidAlive()",
+      "_origin": "ast",
+      "community": 26,
+      "community_name": "os.Process",
+      "file_type": "code",
+      "norm_label": "pidalive()",
+      "source_file": "src/shared/unix_process.go",
+      "source_location": "L35"
+    },
+    {
+      "id": "src_shared_unix_process_signalterm",
+      "label": "SignalTerm()",
+      "_origin": "ast",
+      "community": 26,
+      "community_name": "os.Process",
+      "file_type": "code",
+      "norm_label": "signalterm()",
+      "source_file": "src/shared/unix_process.go",
+      "source_location": "L14"
+    },
+    {
+      "id": "src_windows_main_sendctrlbreak",
+      "label": "sendCtrlBreak()",
+      "_origin": "ast",
+      "community": 26,
+      "community_name": "os.Process",
+      "file_type": "code",
+      "norm_label": "sendctrlbreak()",
+      "source_file": "src/windows/main.go",
+      "source_location": "L119"
+    },
+    {
       "id": "go_type_net_http_request",
       "label": "net/http.Request",
       "_origin": "ast",
@@ -1670,17 +1824,6 @@
       "community_name": "time.Duration",
       "file_type": "code",
       "norm_label": "time.duration",
-      "source_file": "",
-      "source_location": ""
-    },
-    {
-      "id": "go_type_time_time",
-      "label": "time.Time",
-      "_origin": "ast",
-      "community": 3,
-      "community_name": "time.Duration",
-      "file_type": "code",
-      "norm_label": "time.time",
       "source_file": "",
       "source_location": ""
     },
@@ -1859,28 +2002,6 @@
       "norm_label": "respondjson()",
       "source_file": "src/shared/http.go",
       "source_location": "L112"
-    },
-    {
-      "id": "src_shared_lifecycle",
-      "label": "lifecycle.go",
-      "_origin": "ast",
-      "community": 3,
-      "community_name": "time.Duration",
-      "file_type": "code",
-      "norm_label": "lifecycle.go",
-      "source_file": "src/shared/lifecycle.go",
-      "source_location": "L1"
-    },
-    {
-      "id": "src_shared_lifecycle_computerestartdelay",
-      "label": "ComputeRestartDelay()",
-      "_origin": "ast",
-      "community": 3,
-      "community_name": "time.Duration",
-      "file_type": "code",
-      "norm_label": "computerestartdelay()",
-      "source_file": "src/shared/lifecycle.go",
-      "source_location": "L34"
     },
     {
       "id": "src_shared_logs",
@@ -2504,39 +2625,6 @@
       "source_location": "L166"
     },
     {
-      "id": "go_type_os_process",
-      "label": "os.Process",
-      "_origin": "ast",
-      "community": 7,
-      "community_name": "Supervisor",
-      "file_type": "code",
-      "norm_label": "os.process",
-      "source_file": "",
-      "source_location": ""
-    },
-    {
-      "id": "linux_tunnelmanager_onstarted",
-      "label": ".onStarted()",
-      "_origin": "ast",
-      "community": 7,
-      "community_name": "Supervisor",
-      "file_type": "code",
-      "norm_label": ".onstarted()",
-      "source_file": "src/linux/main.go",
-      "source_location": "L195"
-    },
-    {
-      "id": "macos_tunnelmanager_onstarted",
-      "label": ".onStarted()",
-      "_origin": "ast",
-      "community": 7,
-      "community_name": "Supervisor",
-      "file_type": "code",
-      "norm_label": ".onstarted()",
-      "source_file": "src/macos/main.go",
-      "source_location": "L182"
-    },
-    {
       "id": "shared_childprocess",
       "label": "childProcess",
       "_origin": "ast",
@@ -2722,72 +2810,6 @@
       "norm_label": "newsupervisor()",
       "source_file": "src/shared/supervisor.go",
       "source_location": "L79"
-    },
-    {
-      "id": "src_shared_unix_process",
-      "label": "unix_process.go",
-      "_origin": "ast",
-      "community": 7,
-      "community_name": "Supervisor",
-      "file_type": "code",
-      "norm_label": "unix_process.go",
-      "source_file": "src/shared/unix_process.go",
-      "source_location": "L1"
-    },
-    {
-      "id": "src_shared_unix_process_forcekill",
-      "label": "ForceKill()",
-      "_origin": "ast",
-      "community": 7,
-      "community_name": "Supervisor",
-      "file_type": "code",
-      "norm_label": "forcekill()",
-      "source_file": "src/shared/unix_process.go",
-      "source_location": "L25"
-    },
-    {
-      "id": "src_shared_unix_process_killpid",
-      "label": "killPID()",
-      "_origin": "ast",
-      "community": 7,
-      "community_name": "Supervisor",
-      "file_type": "code",
-      "norm_label": "killpid()",
-      "source_file": "src/shared/unix_process.go",
-      "source_location": "L39"
-    },
-    {
-      "id": "src_shared_unix_process_pidalive",
-      "label": "pidAlive()",
-      "_origin": "ast",
-      "community": 7,
-      "community_name": "Supervisor",
-      "file_type": "code",
-      "norm_label": "pidalive()",
-      "source_file": "src/shared/unix_process.go",
-      "source_location": "L35"
-    },
-    {
-      "id": "src_shared_unix_process_signalterm",
-      "label": "SignalTerm()",
-      "_origin": "ast",
-      "community": 7,
-      "community_name": "Supervisor",
-      "file_type": "code",
-      "norm_label": "signalterm()",
-      "source_file": "src/shared/unix_process.go",
-      "source_location": "L14"
-    },
-    {
-      "id": "src_windows_main_sendctrlbreak",
-      "label": "sendCtrlBreak()",
-      "_origin": "ast",
-      "community": 7,
-      "community_name": "Supervisor",
-      "file_type": "code",
-      "norm_label": "sendctrlbreak()",
-      "source_file": "src/windows/main.go",
-      "source_location": "L119"
     },
     {
       "id": "src_linux_uninstall",
@@ -3836,7 +3858,7 @@
       "weight": 1.0
     },
     {
-      "source": "src_linux_main_addinterfacetotrustedzone",
+      "source": "src_linux_main_bindinterfacetotrustedzone",
       "target": "src_linux_main_runfirewallcmd",
       "relation": "calls",
       "_origin": "ast",
@@ -3844,19 +3866,55 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "src/linux/main.go",
-      "source_location": "L346",
+      "source_location": "L357",
       "weight": 1.0
     },
     {
       "source": "src_linux_main_ensureinterfaceintrustedzone",
-      "target": "src_linux_main_addinterfacetotrustedzone",
+      "target": "src_linux_main_waitforinterface",
       "relation": "calls",
       "_origin": "ast",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "src/linux/main.go",
-      "source_location": "L360",
+      "source_location": "L377",
+      "weight": 1.0
+    },
+    {
+      "source": "src_linux_main_ensureinterfaceintrustedzone",
+      "target": "src_linux_main_getzoneofinterface",
+      "relation": "calls",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "call",
+      "source_file": "src/linux/main.go",
+      "source_location": "L389",
+      "weight": 1.0
+    },
+    {
+      "source": "src_linux_main_ensureinterfaceintrustedzone",
+      "target": "src_linux_main_bindinterfacetotrustedzone",
+      "relation": "calls",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "call",
+      "source_file": "src/linux/main.go",
+      "source_location": "L398",
+      "weight": 1.0
+    },
+    {
+      "source": "src_linux_main_getzoneofinterface",
+      "target": "src_linux_main_runfirewallcmdoutput",
+      "relation": "calls",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "call",
+      "source_file": "src/linux/main.go",
+      "source_location": "L369",
       "weight": 1.0
     },
     {
@@ -3868,7 +3926,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "src/linux/main.go",
-      "source_location": "L422",
+      "source_location": "L472",
       "weight": 1.0
     },
     {
@@ -3880,7 +3938,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "src/linux/main.go",
-      "source_location": "L423",
+      "source_location": "L473",
       "weight": 1.0
     },
     {
@@ -3892,7 +3950,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "src/linux/main.go",
-      "source_location": "L424",
+      "source_location": "L474",
       "weight": 1.0
     },
     {
@@ -3904,7 +3962,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "src/linux/main.go",
-      "source_location": "L427",
+      "source_location": "L477",
       "weight": 1.0
     },
     {
@@ -3916,7 +3974,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "src/linux/main.go",
-      "source_location": "L428",
+      "source_location": "L478",
       "weight": 1.0
     },
     {
@@ -3928,7 +3986,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "src/linux/main.go",
-      "source_location": "L430",
+      "source_location": "L480",
       "weight": 1.0
     },
     {
@@ -3940,7 +3998,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "src/linux/main.go",
-      "source_location": "L438",
+      "source_location": "L488",
       "weight": 1.0
     },
     {
@@ -3964,7 +4022,19 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "src/linux/main.go",
-      "source_location": "L350",
+      "source_location": "L361",
+      "weight": 1.0
+    },
+    {
+      "source": "src_linux_main_runfirewallcmd",
+      "target": "src_linux_main_runfirewallcmdoutput",
+      "relation": "calls",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "call",
+      "source_file": "src/linux/main.go",
+      "source_location": "L418",
       "weight": 1.0
     },
     {
@@ -6124,7 +6194,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "src/linux/main.go",
-      "source_location": "L357",
+      "source_location": "L376",
       "weight": 1.0
     },
     {
@@ -6782,13 +6852,13 @@
     },
     {
       "source": "src_linux_main",
-      "target": "src_linux_main_addinterfacetotrustedzone",
+      "target": "src_linux_main_bindinterfacetotrustedzone",
       "relation": "contains",
       "_origin": "ast",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "src/linux/main.go",
-      "source_location": "L345",
+      "source_location": "L356",
       "weight": 1.0
     },
     {
@@ -6799,7 +6869,18 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "src/linux/main.go",
-      "source_location": "L349",
+      "source_location": "L360",
+      "weight": 1.0
+    },
+    {
+      "source": "src_linux_main",
+      "target": "src_linux_main_getzoneofinterface",
+      "relation": "contains",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "src/linux/main.go",
+      "source_location": "L368",
       "weight": 1.0
     },
     {
@@ -6810,18 +6891,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "src/linux/main.go",
-      "source_location": "L357",
-      "weight": 1.0
-    },
-    {
-      "source": "src_linux_main",
-      "target": "src_linux_main_runfirewallcmd",
-      "relation": "contains",
-      "_origin": "ast",
-      "confidence": "EXTRACTED",
-      "confidence_score": 1.0,
-      "source_file": "src/linux/main.go",
-      "source_location": "L378",
+      "source_location": "L376",
       "weight": 1.0
     },
     {
@@ -6837,13 +6907,35 @@
     },
     {
       "source": "src_linux_main",
+      "target": "src_linux_main_runfirewallcmd",
+      "relation": "contains",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "src/linux/main.go",
+      "source_location": "L417",
+      "weight": 1.0
+    },
+    {
+      "source": "src_linux_main",
+      "target": "src_linux_main_runfirewallcmdoutput",
+      "relation": "contains",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "src/linux/main.go",
+      "source_location": "L422",
+      "weight": 1.0
+    },
+    {
+      "source": "src_linux_main",
       "target": "src_linux_main_main",
       "relation": "contains",
       "_origin": "ast",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "src/linux/main.go",
-      "source_location": "L409",
+      "source_location": "L459",
       "weight": 1.0
     },
     {
@@ -9019,5 +9111,5 @@
     }
   ],
   "hyperedges": [],
-  "built_at_commit": "e2bf242f80674f8afe45607dbcfe6c032c5e7041"
+  "built_at_commit": "646fd99b9d22e9bcf8d59b79853213886e1aee6d"
 }
